@@ -91,15 +91,25 @@ class CalFireIncidents(RecordSource):
     def _bulk_path(self) -> Path:
         return self.settings.cache_dir / "bulk" / f"{self.spec.id}.json"
 
+    def _years(self) -> list[int]:
+        yrs = self.spec.raw.get("years") or []
+        return list(range(int(yrs[0]), int(yrs[1]) + 1)) if len(yrs) == 2 else [None]
+
     def prefetch(self) -> None:
         p = self._bulk_path()
         if p.exists():
-            data = pd.read_json(p)
+            data = pd.read_json(p, dtype=False)
         else:
-            raw = self.http.get_json(self.spec.url)
-            if isinstance(raw, dict):  # GeoJsonList shape or wrapped list
-                raw = raw.get("features") or raw.get("Incidents") or raw.get("incidents") or []
-                raw = [r.get("properties", r) for r in raw]
+            # the List endpoint returns one season per call: `&year=YYYY` (only the current year without it)
+            raw: list[dict] = []
+            for yr in self._years():
+                url = self.spec.url if yr is None else f"{self.spec.url}&year={yr}"
+                part = self.http.get_json(url)
+                if isinstance(part, dict):  # GeoJsonList shape or wrapped list
+                    part = part.get("features") or part.get("Incidents") or part.get("incidents") or []
+                    part = [r.get("properties", r) for r in part]
+                log.info("%s: %d incidents for %s", self.spec.id, len(part), yr or "current year")
+                raw.extend(part)
             p.parent.mkdir(parents=True, exist_ok=True)
             data = pd.DataFrame(raw)
             data.to_json(p, orient="records", date_format="iso")
@@ -140,6 +150,12 @@ class LocalVector(RecordSource):
             match = [l for l in layers if l.lower() == self.spec.layer.lower()]
             if match:
                 kwargs["layer"] = match[0]
+        if self.spec.filter:
+            # filter while reading (FPA-FOD has 2.7 M national rows); the loop below re-checks case-insensitively
+            names = set(pyogrio.read_info(self.path, **kwargs)["fields"])
+            conds = [f"{c} = '{v}'" for c, v in self.spec.filter.items() if c in names]
+            if conds:
+                kwargs["where"] = " AND ".join(conds)
         gdf = gpd.read_file(self.path, **kwargs)
         if not isinstance(gdf, gpd.GeoDataFrame) or gdf.geometry is None or gdf.geometry.isna().all():
             lat = resolve_column(gdf.columns, self.spec.fields.get("lat"))

@@ -13,7 +13,7 @@ from .config import SourceSpec
 
 CANONICAL_COLUMNS = [
     "source", "lineage", "trust", "source_record_id",
-    "name", "irwin_id", "unique_fire_id", "local_number", "unit", "year", "complex_name",
+    "name", "irwin_id", "irwin_ids", "unique_fire_id", "local_number", "unit", "year", "complex_name",
     "lat", "lon", "ignition_kind", "coord_decimals",
     "discovery_utc", "discovery_precision", "containment_utc", "control_utc", "out_utc",
     "size_acres", "cause_raw", "cause_class",
@@ -34,18 +34,22 @@ def resolve_column(columns: Iterable[str], candidates: list[str] | None) -> str 
     return None
 
 
-def pick(row: pd.Series | dict, spec: SourceSpec, key: str, columns: Iterable[str]) -> Any:
-    col = resolve_column(columns, spec.fields.get(key))
-    if col is None:
-        return None
-    val = row[col]
-    if val is None:
-        return None
+def _blank(val: Any) -> bool:
+    if val is None or val is pd.NaT:
+        return True
     if isinstance(val, float) and math.isnan(val):
-        return None
-    if isinstance(val, str) and val.strip() in ("", "<Null>", "None", "nan", "NaN"):
-        return None
-    return val
+        return True
+    return isinstance(val, str) and val.strip() in ("", "<Null>", "None", "nan", "NaN")
+
+
+def pick(row: pd.Series | dict, spec: SourceSpec, key: str, columns: Iterable[str]) -> Any:
+    """First non-blank value among the candidate columns (a present but empty column falls through)."""
+    columns = list(columns)
+    for cand in spec.fields.get(key) or []:
+        col = resolve_column(columns, [cand])
+        if col is not None and not _blank(row[col]):
+            return row[col]
+    return None
 
 
 # ---------------------------------------------------------------- identifiers and names
@@ -54,10 +58,20 @@ _IRWIN_RE = re.compile(r"[{}\s]")
 
 
 def norm_irwin(val: Any) -> str | None:
+    """Canonical IRWIN GUID. A list field (InFORM RelatedIrwinIDs) yields its first GUID; see irwin_ids()."""
+    ids = irwin_ids(val)
+    return ids[0] if ids else None
+
+
+def irwin_ids(val: Any) -> list[str]:
     if val is None:
-        return None
-    s = _IRWIN_RE.sub("", str(val)).upper()
-    return s if len(s) >= 32 else None
+        return []
+    out = []
+    for part in re.split(r"[,;]", str(val)):
+        s = _IRWIN_RE.sub("", part).upper()
+        if len(s) >= 32:
+            out.append(s)
+    return out
 
 
 def norm_ufi(val: Any) -> str | None:
@@ -167,6 +181,8 @@ def to_utc(val: Any, naive_tz: str = "UTC", time_hhmm: Any = None) -> tuple[pd.T
 # ---------------------------------------------------------------- cause
 
 _FRAP_CAUSE = {1: "Natural", 17: "Natural", 14: "Undetermined"}
+# InFORM / IRWIN FireCauseID domain (FireCauseDomain on the public layer)
+_INFORM_CAUSE = {1: "Natural", 2: "Undetermined", 3: "Human"}
 _HUMAN_WORDS = ("human", "equipment", "arson", "incendiary", "debris", "power", "vehicle", "campfire",
                 "smok", "railroad", "children", "playing", "firearm", "fireworks", "misc", "structure",
                 "aircraft", "escaped", "burning", "recreation", "utilit")
@@ -184,6 +200,11 @@ def classify_cause(val: Any, codes: str | None = None) -> str | None:
             if code <= 0:
                 return None
             return _FRAP_CAUSE.get(code, "Human")
+    if codes == "inform":
+        try:
+            return _INFORM_CAUSE.get(int(float(val)))
+        except (TypeError, ValueError):
+            pass
     s = str(val).strip().lower()
     if not s:
         return None
@@ -212,6 +233,26 @@ def coord_decimals(lat: Any, lon: Any) -> int | None:
     if a is None or b is None:
         return None
     return min(a, b)
+
+
+_MTBS_EVENT_RE = re.compile(r"^[A-Z]{2}(\d{5})(\d{6})(\d{8})$")
+
+
+def mtbs_event_point(event_id: Any) -> tuple[float, float] | None:
+    """Reported location encoded in an MTBS Event_ID: CA3982012144020181108 -> (39.820, -121.440).
+
+    MTBS BurnBndLat/BurnBndLon are the burned-area centroid, not the reported origin."""
+    m = _MTBS_EVENT_RE.match(str(event_id or "").strip().upper())
+    if not m:
+        return None
+    return int(m.group(1)) / 1000.0, -int(m.group(2)) / 1000.0
+
+
+def calendar_date(val: Any) -> str | None:
+    """The calendar date a date-only value encodes, read in its own representation (ArcGIS and GeoPackage
+    store dates as 00:00 UTC, which must not be shifted into the previous Pacific day)."""
+    ts, _ = to_utc(val, "UTC")
+    return None if ts is None else ts.strftime("%Y-%m-%d")
 
 
 def valid_latlon(lat: Any, lon: Any) -> bool:
@@ -243,11 +284,14 @@ def normalize_rows(df: pd.DataFrame, spec: SourceSpec, geometry_col: str | None 
             if fcol is not None and row[fcol] is not None:
                 key = str(row[fcol]).strip()
                 mapping = {str(k).upper(): v for k, v in (spec.lineage_from_field.get("map") or {}).items()}
-                rec["lineage"] = mapping.get(key.upper(), f"{spec.lineage}:{key.upper()}")
+                default = spec.lineage_from_field.get("default", f"{spec.lineage}:{key.upper()}")
+                rec["lineage"] = mapping.get(key.upper(), default)
         sid = pick(row, spec, "source_id", cols)
         rec["source_record_id"] = str(sid) if sid is not None else f"{spec.id}:{idx}"
         rec["name"] = pick(row, spec, "name", cols)
-        rec["irwin_id"] = norm_irwin(pick(row, spec, "irwin_id", cols))
+        ids = irwin_ids(pick(row, spec, "irwin_id", cols))
+        rec["irwin_id"] = ids[0] if ids else None
+        rec["irwin_ids"] = ";".join(ids) if len(ids) > 1 else None
         rec["unique_fire_id"] = norm_ufi(pick(row, spec, "unique_fire_id", cols))
         ln = pick(row, spec, "local_number", cols)
         rec["local_number"] = str(ln).strip() if ln is not None else None
@@ -261,24 +305,30 @@ def normalize_rows(df: pd.DataFrame, spec: SourceSpec, geometry_col: str | None 
         rec["complex_name"] = pick(row, spec, "complex_name", cols)
 
         lat, lon = pick(row, spec, "lat", cols), pick(row, spec, "lon", cols)
-        if (lat is None or lon is None) and geometry_col in df.columns and spec.geometry == "point":
+        if spec.raw.get("point_from") == "mtbs_event_id":
+            pt = mtbs_event_point(pick(row, spec, "source_id", cols))
+            lat, lon = pt if pt else (None, None)
+        elif (lat is None or lon is None) and geometry_col in df.columns and spec.geometry == "point":
             g = row[geometry_col]
             if g is not None and not getattr(g, "is_empty", True) and g.geom_type == "Point":
                 lat, lon = g.y, g.x
         if valid_latlon(lat, lon):
             rec["lat"], rec["lon"] = float(lat), float(lon)
-            rec["coord_decimals"] = coord_decimals(lat, lon)
+            # an Event_ID point is always thousandths of a degree, even when trailing zeros vanish (39.82)
+            rec["coord_decimals"] = 3 if spec.raw.get("point_from") == "mtbs_event_id" else coord_decimals(lat, lon)
             rec["ignition_kind"] = spec.ignition_kind
 
         tz = spec.datetime_tz or "UTC"
-        disc, prec = to_utc(pick(row, spec, "discovery", cols), tz, pick(row, spec, "discovery_time", cols))
+        # calendar-date sources: keep the stored date, localise it to the source's zone, then add any HHMM
+        as_date = calendar_date if (spec.calendar_dates or spec.date_only) else (lambda v: v)
+        disc, prec = to_utc(as_date(pick(row, spec, "discovery", cols)), tz, pick(row, spec, "discovery_time", cols))
         if spec.date_only and disc is not None:
             prec = "date"
         rec["discovery_utc"], rec["discovery_precision"] = disc, prec
-        rec["containment_utc"] = to_utc(pick(row, spec, "containment", cols), tz,
+        rec["containment_utc"] = to_utc(as_date(pick(row, spec, "containment", cols)), tz,
                                         pick(row, spec, "containment_time", cols))[0]
-        rec["control_utc"] = to_utc(pick(row, spec, "control", cols), tz)[0]
-        rec["out_utc"] = to_utc(pick(row, spec, "out", cols), tz)[0]
+        rec["control_utc"] = to_utc(as_date(pick(row, spec, "control", cols)), tz)[0]
+        rec["out_utc"] = to_utc(as_date(pick(row, spec, "out", cols)), tz)[0]
         rec["perimeter_datetime_utc"] = to_utc(pick(row, spec, "perimeter_datetime", cols), tz)[0]
 
         size = pick(row, spec, "size_acres", cols)

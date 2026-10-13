@@ -55,7 +55,7 @@ sources:
       control: [ControlDateTime]
       out: [FireOutDateTime]
       size_acres: [FinalAcres, IncidentSize]
-      cause: [FireCauseGeneral, FireCause]
+      cause: [FireCause, FireCauseGeneral]
     verified: 2026-10-13
 
   inform_fodr:
@@ -67,13 +67,19 @@ sources:
     where: "FireDiscoveryDateTime >= TIMESTAMP '{t0}' AND FireDiscoveryDateTime < TIMESTAMP '{t1}'"
     roles: [ignition, timing, size, cause]
     lineage: IRWIN
+    # California 2018-19 records were back-filled from FireStat (USFS) and WFMI (BLM), not created in IRWIN
+    lineage_from_field:
+      field: CreatedBySystem
+      map: {FireStat: USFS-FIRESTAT, WFMI: DOI-WFMI, FMIS: FWS-FMIS}
+      default: IRWIN
     trust: A
     ignition_kind: final fire report point of origin
     datetime_tz: UTC
-    coverage: "complete 2020 to present; earlier years being back-filled"
+    coverage: "CA from CAD systems via IRWIN 2020 on; 2018-19 CA records are FireStat/WFMI back-fill"
+    cause_codes: inform
     fields:
       name: [IncidentName]
-      irwin_id: [IrwinID]
+      irwin_id: [IrwinID, RelatedIrwinIDs]
       unique_fire_id: [UniqueFireIdentifier]
       local_number: [LocalIncidentIdentifier]
       unit: [POOProtectingUnit]
@@ -83,33 +89,36 @@ sources:
       containment: [ContainmentDateTime]
       control: [ControlDateTime]
       out: [FireOutDateTime]
-      size_acres: [FinalAcres, CalculatedAcres]
-      cause: [FireCauseGeneral, FireCause]
-    verified: 2026-10-13
+      size_acres: [FinalAcres, IncidentSize, CalculatedAcres]   # FinalAcres is null for every CA record
+      cause: [FireCauseID]
+      perimeter_source: [CreatedBySystem]
+    verified: "2026-10-13 (fsa probe: no IrwinID or FireCause* text fields; uses RelatedIrwinIDs and coded FireCauseID)"
 
   calfire_incidents:
     name: CAL FIRE incident list (fire.ca.gov)
     agency: CAL FIRE
     kind: calfire_json
-    url: https://www.fire.ca.gov/umbraco/api/IncidentApi/List?inactive=true
+    # www.fire.ca.gov 301-redirects here, and its CDN refuses non-generic user agents
+    url: https://incidents.fire.ca.gov/umbraco/api/IncidentApi/List?inactive=true
+    years: [2018, 2025]          # one call per season (`&year=`); without it only the current year comes back
     geometry: point
     roles: [ignition, timing, size]
     lineage: CALFIRE-OPS
     trust: A
     ignition_kind: incident map location
-    datetime_tz: America/Los_Angeles
+    datetime_tz: UTC              # Started carries a Z suffix and is true UTC (Camp 2018: 14:33Z = 06:33 PST)
     coverage: "CAL FIRE and SRA incidents, 2013 to present"
     fields:
       name: [Name]
       lat: [Latitude]
       lon: [Longitude]
-      discovery: [Started, StartedDateOnly]
-      out: [ExtinguishedDate, Extinguished]
+      discovery: [Started]
+      # ExtinguishedDate is left out: many 2018 records were closed in bulk on 2019-01-04
       size_acres: [AcresBurned]
       unit: [AdminUnit]
       source_id: [UniqueId]
     verified: 2026-10-13
-    notes: "robots.txt disallows crawling the site; one cached call of the API per run is the intended use."
+    notes: "robots.txt disallows crawling the site; one cached call per season (8 calls) is made, then reused."
 
   usfs_edw_points:
     name: USFS EDW Fire Occurrence Point (FireStat, all years)
@@ -148,15 +157,22 @@ sources:
     geometry: point
     roles: [ignition, timing, size, cause]
     lineage: FPA-FOD
+    # FPA-FOD is a compilation: each record keeps the system it was copied from (7th ed., CA 2018-24:
+    # FS-FIRESTAT and DOI-WFMI 2018-19, IA-IRWIN 2020, IA-INFORM 2021-24, ST-NASF/ST-CACDF state reports)
+    lineage_from_field:
+      field: SOURCE_SYSTEM
+      map: {FS-FIRESTAT: USFS-FIRESTAT, IA-IRWIN: IRWIN, IA-INFORM: IRWIN, DOI-WFMI: DOI-WFMI,
+            FWS-FMIS: FWS-FMIS, IA-MTBS: MTBS-REPORTED, IA-ICS209: ICS209, ST-NASF: CALFIRE-STATE,
+            ST-CACDF: CALFIRE-STATE}
+      default: FPA-FOD
     trust: A
     ignition_kind: compiled agency report location (>= PLSS-section precision)
     datetime_tz: America/Los_Angeles
+    calendar_dates: true          # DISCOVERY_DATE / CONT_DATE are dates stored as 00:00 UTC; times are HHMM local
     filter: {STATE: CA}
     fields:
       name: [FIRE_NAME]
-      irwin_id: [IRWIN_ID, IRWINID]
-      unique_fire_id: [UNIQUE_FIRE_ID]
-      local_number: [LOCAL_INCIDENT_ID]
+      local_number: [LOCAL_INCIDENT_ID, LOCAL_FIRE_REPORT_ID]
       unit: [NWCG_REPORTING_UNIT_ID]
       complex_name: [COMPLEX_NAME]
       year: [FIRE_YEAR]
@@ -170,7 +186,8 @@ sources:
       cause: [NWCG_CAUSE_CLASSIFICATION, NWCG_GENERAL_CAUSE]
       source_id: [FOD_ID]
       mtbs_id: [MTBS_ID]
-    verified: "page 2026-10-13; column names from 6th edition, confirm with `fsa probe`"
+      perimeter_source: [SOURCE_SYSTEM]
+    verified: "FPA_FOD_20260615.gpkg checked 2026-10-13: no IRWIN_ID or UNIQUE_FIRE_ID columns in the 7th edition"
 
   mtbs_points:
     name: MTBS fire occurrence locations
@@ -181,17 +198,19 @@ sources:
     roles: [ignition, timing, size]
     lineage: MTBS-REPORTED
     trust: B
-    ignition_kind: reported location carried into MTBS
-    datetime_tz: UTC
+    ignition_kind: reported location encoded in the MTBS Event_ID (0.001 deg)
+    # BurnBndLat/BurnBndLon are the centroid of the burned area (Camp 2018: 10 km from the origin), so the point
+    # comes from Event_ID: CA3982012144020181108 -> 39.820, -121.440
+    point_from: mtbs_event_id
+    datetime_tz: America/Los_Angeles
+    date_only: true
     fields:
       name: [Incid_Name]
       irwin_id: [irwinID, IRWINID]
-      lat: [BurnBndLat]
-      lon: [BurnBndLon]
       discovery: [Ig_Date]
       size_acres: [BurnBndAc]
       source_id: [Event_ID]
-    verified: unverified
+    verified: "mtbs_FODpoints_DD.shp downloaded 2026-10-13 (fields lower-case; matched case-insensitively)"
 
   # ---------------------------------------------------------------- perimeters
   frap_perimeters:
@@ -204,7 +223,7 @@ sources:
     roles: [perimeter, timing, size, cause]
     lineage: CALFIRE-FRAP
     trust: A
-    datetime_tz: UTC
+    datetime_tz: America/Los_Angeles   # ALARM_DATE/CONT_DATE are calendar dates stored as 00:00 UTC
     date_only: true
     fields:
       name: [FIRE_NAME]
@@ -300,15 +319,16 @@ sources:
     roles: [perimeter, size]
     lineage: MTBS
     trust: A
-    datetime_tz: UTC
-    coverage: "fires >= 1,000 ac in the West, 1984 to the latest MTBS release"
+    datetime_tz: America/Los_Angeles
+    date_only: true
+    coverage: "fires >= 1,000 ac in the West, 1984 to the latest MTBS release (CA through 2025-09 on 2026-10-13)"
     fields:
       name: [Incid_Name]
       irwin_id: [irwinID, IRWINID]
       discovery: [Ig_Date]
       size_acres: [BurnBndAc]
       source_id: [Event_ID]
-    verified: unverified
+    verified: "mtbs_perims_DD.shp downloaded 2026-10-13"
 
   firis_perimeters:
     name: CA perimeters CAL FIRE / NIFC / FIRIS public view

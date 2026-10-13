@@ -26,6 +26,7 @@ class SourceSpec:
     fields: dict[str, list[str]] = field(default_factory=dict)
     datetime_tz: str = "UTC"
     date_only: bool = False
+    calendar_dates: bool = False
     enabled: bool = True
     consensus: bool = True
     path_key: str | None = None

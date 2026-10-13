@@ -31,6 +31,9 @@ def score_candidate(rec: pd.Series, fire: Fire, cfg: dict[str, Any]) -> tuple[fl
     comp: dict[str, float] = {}
     if fire.irwin_id and rec.get("irwin_id") and rec["irwin_id"] == fire.irwin_id:
         return 1.0, "irwin_id", comp
+    related = rec.get("irwin_ids")
+    if fire.irwin_id and isinstance(related, str) and fire.irwin_id in related.split(";"):
+        return 1.0, "irwin_id", comp
     if fire.unique_fire_id and rec.get("unique_fire_id") and rec["unique_fire_id"] == fire.unique_fire_id:
         return 0.97, "unique_fire_id", comp
     fire_num = incident_number(fire.unique_fire_id)

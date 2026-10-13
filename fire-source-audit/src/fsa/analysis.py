@@ -25,6 +25,24 @@ def _ts_ok(v: Any) -> bool:
     return v is not None and not pd.isna(v)
 
 
+COPY_TOLERANCE_M = 5.0  # float32 storage and Web Mercator round trips move a copied point by ~1-2 m
+
+
+def _copied_point(a: dict[str, Any], b: dict[str, Any]) -> bool:
+    """Same point within storage noise, or one is the other rounded to fewer decimals (MTBS Event_ID, PLSS)."""
+    if math.hypot(a["x"] - b["x"], a["y"] - b["y"]) < COPY_TOLERANCE_M:
+        return True
+    da, db = a.get("decimals"), b.get("decimals")
+    if not _ok(da) or not _ok(db) or da == db:
+        return False
+    lo, hi = (a, b) if da < db else (b, a)
+    d = int(lo["decimals"])
+    if d > 4:
+        return False
+    tol = 0.1 * 10 ** -d
+    return abs(round(hi["lat"], d) - lo["lat"]) < tol and abs(round(hi["lon"], d) - lo["lon"]) < tol
+
+
 @dataclass
 class FireResult:
     summary: dict[str, Any]
@@ -216,7 +234,7 @@ class FireAnalyzer:
                             "eligible": self._eligible(r["source"]) and r["source"] != "fireset_subset"})
         # identical coordinates across sources reveal shared upstream records (tests the lineage grouping)
         same = sorted({"=".join(sorted((a["source"], b["source"]))) for a, b in pairwise(pts)
-                       if a["source"] != b["source"] and math.hypot(a["x"] - b["x"], a["y"] - b["y"]) < 1.0})
+                       if a["source"] != b["source"] and _copied_point(a, b)})
         res.summary["ign_identical_pairs"] = ";".join(same)
         elig = [p for p in pts if p["eligible"]]
         lineages: dict[str, list[dict]] = {}

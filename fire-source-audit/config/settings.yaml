@@ -7,12 +7,12 @@ paths:
   out_dir: out
   # local downloads (leave a path empty or missing to skip that source)
   local:
-    fpa_fod: data/FPA_FOD_20260615.gpkg            # or .sqlite / .gdb, layer "Fires"
-    mtbs_perimeters: data/mtbs_perims_DD.shp        # from the MTBS national burned-area-boundaries download
-    mtbs_points: data/mtbs_FODpoints_DD.shp         # from the MTBS national fire-occurrence-points download
-    usgs_combined: data/usgs_combined_fire_polygons.gdb
+    fpa_fod: ../downloads/fpa_fod/Data/FPA_FOD_20260615.gpkg   # RDS-2013-0009.7 GPKG, layer "Fires"
+    mtbs_perimeters: ../downloads/mtbs/perims/mtbs_perims_DD.shp   # MTBS composite burned-area boundaries
+    mtbs_points: ../downloads/mtbs/pts/mtbs_FODpoints_DD.shp       # MTBS composite fire-occurrence points
+    usgs_combined: ../downloads/usgs_combined/Fire_Feature_Data_Pro2_8.gdb
     viirs_h5_pattern: data/run_{year}/detection_{year}_filtered_350.h5
-    firms_csv_glob: data/firms/*.csv
+    firms_csv_glob: ../downloads/firms/*.csv
 
 http:
   timeout_s: 60

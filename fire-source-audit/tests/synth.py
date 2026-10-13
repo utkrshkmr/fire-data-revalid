@@ -87,7 +87,7 @@ def write_cache(cache_dir: Path) -> None:
         [Point(A_LON, A_LAT), Point(A_LON + 0.05, A_LAT + 0.03)]))
     cache.save_gdf(cache.raw_path(cache_dir, "calfire_incidents", "2018_ALPHA"), gdf(
         [{"Name": "Alpha Fire", "Latitude": round(a_cf[1], 5), "Longitude": round(a_cf[0], 5),
-          "Started": "2018-11-08T06:33:00", "AcresBurned": 2400, "UniqueId": "cf-a"}],
+          "Started": "2018-11-08T14:33:00Z", "AcresBurned": 2400, "UniqueId": "cf-a"}],
         [Point(*a_cf)]))
     cache.save_gdf(cache.raw_path(cache_dir, "fpa_fod", "2018_ALPHA"), gdf(
         [{"FIRE_NAME": "ALPHA", "LATITUDE": round(a_fod[1], 4), "LONGITUDE": round(a_fod[0], 4),
@@ -114,7 +114,7 @@ def write_cache(cache_dir: Path) -> None:
           "FireCauseGeneral": "Natural"}],
         [Point(B_LON, B_LAT)]))
     cache.save_gdf(cache.raw_path(cache_dir, "calfire_incidents", "2019_BRAVO"), gdf(
-        [{"Name": "Bravo Fire", "Latitude": b_cf[1], "Longitude": b_cf[0], "Started": "2019-09-05T12:55:00",
+        [{"Name": "Bravo Fire", "Latitude": b_cf[1], "Longitude": b_cf[0], "Started": "2019-09-05T19:55:00Z",
           "AcresBurned": 2500}],
         [Point(*b_cf)]))
     cache.save_gdf(cache.raw_path(cache_dir, "usfs_edw_points", "2019_BRAVO"), gdf(
