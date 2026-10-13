@@ -284,7 +284,8 @@ sources:
       irwin_id: [attr_IrwinID, poly_IRWINID]
       unique_fire_id: [attr_UniqueFireIdentifier]
       discovery: [attr_FireDiscoveryDateTime]
-      size_acres: [poly_GISAcres, poly_Acres_AutoCalc]
+      # poly_GISAcres is a placeholder (0.1, 1, 20 ac) on many 2020 polygons; AutoCalc is the polygon's area
+      size_acres: [poly_Acres_AutoCalc, poly_GISAcres]
       perimeter_datetime: [poly_PolygonDateTime]
       map_method: [poly_MapMethod]
     verified: 2026-10-13
@@ -341,7 +342,7 @@ sources:
     roles: [perimeter, size]
     lineage: FIRIS-OPS
     trust: B
-    enabled: true
+    enabled: false   # the public view holds the current season only (476 polygons, 2026-01-07..2026-10-12)
     datetime_tz: UTC
     notes: "operational perimeters; one incident may have many dated polygons, the latest is used"
     fields:

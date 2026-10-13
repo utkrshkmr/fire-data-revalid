@@ -33,7 +33,8 @@ Each candidate record is scored against the FireSET fire:
 | Otherwise: 0.45·name + 0.25·date + 0.20·place + 0.10·size | at most 0.89 |
 
 The fuzzy score is halved when the names differ, unless place, date and size all agree strongly. A record is
-accepted at ≥ 0.60. It is flagged *ambiguous* when a different record scores within 0.05 of it. Within one
+accepted at ≥ 0.60, but a fuzzy match more than 15 days from the FireSET start (or a perimeter dated before the
+fire or over a year after it) is rejected as a different fire. It is flagged *ambiguous* when a different record scores within 0.05 of it. Within one
 source, the single best record is kept (its lineage may be set per record). Multi-part perimeters of the same fire are dissolved. For
 operational feeds with several dated polygons, the latest polygon is kept. An ID match whose point lies more
 than 20 km from the fire is flagged as an identifier conflict.
@@ -57,7 +58,11 @@ across lineages, never across raw sources.
   - A cell is burned when at least half the lineages include it.
   - With two lineages this is their union.
 - **Leave-one-out:** every per-source error compares the source with the consensus of the *other* lineages, so a source is never graded against itself.
-- **Lineage check:** pairs of sources that report identical coordinates (< 1 m) are counted in `identical_point_pairs.csv`. A pair that copies often but sits in different lineages should be merged into one lineage in `sources.yaml`.
+- **Per-record lineage:** compiled sources take the lineage of the system each record came from (FPA-FOD
+  `SOURCE_SYSTEM`, InFORM `CreatedBySystem`).
+- **Copies count once:** before the consensus, two points from different lineages are treated as one report when
+  they are within 5 m, or one is the other rounded to 3–4 decimals (MTBS `Event_ID`). Their lineages are merged for
+  that fire (`ign_lineages_merged`). Every copy found is listed in `identical_point_pairs.csv`.
 
 ## 5. Per-source errors (`source_errors.csv`)
 
@@ -96,12 +101,23 @@ correction traces to an agency record. Confidence:
 If no agency point exists, the centre of the first VIIRS overpass is offered with low confidence.
 `fireset_ignition_patch.csv` lists every fire where the recommended point is more than 500 m from FireSET's
 current `Ignition_Lat`/`Ignition_Lon` (or FireSET has none), with old and new coordinates, distance moved,
-source, confidence and reason.
+source, confidence, reason, both points' signed distance to the consensus perimeter and to the first VIIRS
+overpass, and an `action`:
+
+- **replace:** FireSET has no point; or confidence is high; or confidence is medium, FireSET's point is more than
+  375 m outside the consensus perimeter and the new point is not.
+- **review:** everything else, including the satellite fallback (not an agency record).
 
 ## 7. Satellite timing
 
 The first VIIRS detections inside the consensus perimeter (+1 km, to exclude neighbouring fires) give the
-first-overpass time and centre. `viirs_minus_discovery_h` < −3 h is flagged: the satellite saw heat before the
+first-overpass time and centre. Detections more than 12 h before the earliest reported discovery are ignored for
+this (counted in `viirs_n_before_lead_window`); they are usually a neighbouring or earlier fire. NOAA HMS points
+are kept apart from VIIRS and give `hms_minus_discovery_h`.
+
+A whole-hour offset of 2, 5, 7 or 8 h between a source and the other lineages is a suspected clock or time-zone
+error. Both sides of such a pair look offset, so the satellite's first heat (GOES, else HMS, else VIIRS) decides:
+the side farther from it is flagged (`tz_suspect`), the other is marked `tz_suspect_other_side`. `viirs_minus_discovery_h` < −3 h is flagged: the satellite saw heat before the
 reported discovery. That means either a holdover fire, a contaminated window, or a late discovery time. The
 optional GOES-R scan gives the earliest 5-minute detection within 5 km of the FireSET point, from 6 h before to
 3 h after discovery.

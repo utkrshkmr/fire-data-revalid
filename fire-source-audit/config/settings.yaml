@@ -28,6 +28,8 @@ matching:
   ambiguity_margin: 0.05
   # reported discovery may differ from the FireSET start by this many days and still count
   date_window_days: 5
+  # a fuzzy (name/place/size) match more than this many days from the FireSET start is rejected
+  max_fuzzy_days: 15
   # name similarity (0-1) below which name evidence counts as disagreement
   name_min_similarity: 0.55
   # a point within this distance of the FireSET buffered box counts as spatially consistent (m)

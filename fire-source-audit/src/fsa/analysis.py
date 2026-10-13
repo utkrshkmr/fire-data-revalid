@@ -394,12 +394,34 @@ class FireAnalyzer:
                 delta = None
             thr = float(self.ign.get("patch_threshold_m", 500))
             if delta is None or delta > thr:
+                rx, ry = frame.xy(rec["ign_recommended_lon"], rec["ign_recommended_lat"])
+                old_sd = res.summary.get("fireset_ign_signed_dist_to_perimeter_m")
+                new_sd = None if cons_m is None else round(signed_distance_to_polygon_m(Point(rx, ry), cons_m), 1)
+                new_viirs = None if "viirs_x" not in sat else round(math.hypot(rx - sat["viirs_x"], ry - sat["viirs_y"]), 1)
+                old_viirs = None if "viirs_x" not in sat or fire.ign_lat is None else \
+                    round(math.hypot(fx - sat["viirs_x"], fy - sat["viirs_y"]), 1)
+                # replace only when the evidence clearly favours the new point; otherwise ask for a manual look
+                fireset_outside = old_sd is not None and old_sd > tol
+                agency_point = rec["ign_recommended_source"] != "first_viirs_overpass"
+                if delta is None and agency_point:
+                    action, why = "replace", "FireSET has no ignition point"
+                elif agency_point and rec["ign_confidence"] == "high":
+                    action, why = "replace", "all reporting lineages agree on the new point"
+                elif agency_point and rec["ign_confidence"] == "medium" and fireset_outside \
+                        and (new_sd is None or new_sd <= tol):
+                    action, why = "replace", "FireSET point lies outside the final perimeter; the new point is inside"
+                else:
+                    action, why = "review", ("no agency record; satellite fallback only" if not agency_point else
+                                             "both points plausible or evidence weak")
                 res.patch = {"fire_key": fire.key, "FIRE_NAME": fire.name, "YEAR_": fire.year,
-                             "OBJECTID": fire.objectid,
+                             "OBJECTID": fire.objectid, "action": action, "action_reason": why,
                              "Ignition_Lat_old": fire.ign_lat, "Ignition_Lon_old": fire.ign_lon,
                              "Ignition_Lat_new": rec["ign_recommended_lat"], "Ignition_Lon_new": rec["ign_recommended_lon"],
                              "move_m": None if delta is None else round(delta, 1),
                              "new_source": rec["ign_recommended_source"], "confidence": rec["ign_confidence"],
+                             "old_signed_dist_to_perimeter_m": old_sd, "new_signed_dist_to_perimeter_m": new_sd,
+                             "old_dist_to_first_viirs_m": old_viirs, "new_dist_to_first_viirs_m": new_viirs,
+                             "ign_lineages": res.summary.get("ign_lineages"),
                              "reason": rec["ign_reason"]}
                 sev = "high" if (delta is None or delta > minor) else "medium"
                 self._flag(res, fire, "fireset_ignition", sev,
@@ -508,9 +530,14 @@ class FireAnalyzer:
                     off = (r["t"] - ref).total_seconds() / 3600
                     e["discovery_offset_h"] = round(off, 2)
                     if any(abs(abs(off) - o) <= tz_tol for o in tz_offsets):
-                        e["tz_suspect"] = True
-                        self._flag(res, fire, "timing", "medium",
-                                   f"{r['source']} discovery is offset {off:+.2f} h, which looks like a time-zone error")
+                        # a clock error has two sides; the satellite's first heat decides which one is wrong
+                        sat_t = next((sat[k] for k in ("goes_time", "hms_time", "viirs_time") if k in sat), None)
+                        if sat_t is not None and abs((r["t"] - sat_t).total_seconds()) <= abs((ref - sat_t).total_seconds()):
+                            e["tz_suspect_other_side"] = True
+                        else:
+                            e["tz_suspect"] = True
+                            self._flag(res, fire, "timing", "medium",
+                                       f"{r['source']} discovery is offset {off:+.2f} h, which looks like a time-zone error")
             if r["end"] is not None:
                 e["end_utc"] = r["end"]
             res.errors.append(e)

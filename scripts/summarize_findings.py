@@ -74,15 +74,21 @@ def main(out: Path) -> None:
     ti = e[e.aspect == "timing"].copy()
     ti["off"] = pd.to_numeric(ti.get("discovery_offset_h"), errors="coerce")
     ti["day"] = pd.to_numeric(ti.get("discovery_day_offset"), errors="coerce")
+    for c in ("tz_suspect", "tz_suspect_other_side"):
+        ti[c] = ti[c].fillna(False).astype(bool) if c in ti else False
     tg = ti.groupby(["source", "lineage"]).agg(
         n_datetime=("off", "count"), median_h=("off", "median"),
         within_15min=("off", lambda x: round(float((x.dropna().abs() <= .25).mean()), 3) if x.notna().any() else None),
         at_plus2h=("off", lambda x: int(((x - 2).abs() <= .1).sum())),
         at_minus5h=("off", lambda x: int(((x + 5).abs() <= .1).sum())),
         at_7or8h=("off", lambda x: int(((x.abs() - 7).abs() <= .1).sum() + ((x.abs() - 8).abs() <= .1).sum())),
+        tz_error_attributed=("tz_suspect", "sum"),
+        cleared_by_satellite=("tz_suspect_other_side", "sum"),
         n_date=("day", "count"),
         same_day=("day", lambda x: round(float((x.dropna() == 0).mean()), 3) if x.notna().any() else None)).reset_index()
     print("### Discovery time offset by source and lineage (vs the other lineages)\n\n" + md(tg))
+    tz = ti[ti.tz_suspect].assign(year=lambda d: d.fire_key.str[:4]).groupby(["source", "year"]).size().unstack(fill_value=0)
+    print("### Clock / time-zone errors attributed by the satellite referee, by fire year\n\n" + md(tz.reset_index()))
 
     sat = pd.DataFrame({k: pd.to_numeric(s.get(k), errors="coerce") for k in
                         ("viirs_minus_discovery_h", "goes_minus_discovery_h", "hms_minus_discovery_h")})

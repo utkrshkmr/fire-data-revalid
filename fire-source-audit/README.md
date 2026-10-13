@@ -21,7 +21,7 @@ FireSET.
 python -m venv .venv && source .venv/bin/activate
 pip install -e .              # core
 pip install -e ".[goes]"      # optional GOES-R scan
-pip install -e ".[dev]" && pytest   # 20 tests on synthetic fires with known answers
+pip install -e ".[dev]" && pytest   # 24 tests: synthetic fires with known answers + live-data regressions
 ```
 
 Put the fire table at `data/SUBSET_expanded_20260830.xlsx`, or pass `--fires`.
@@ -67,8 +67,9 @@ fetch on a login or transfer node, then run `fsa analyze` anywhere.
 | `source_summary.csv` | per-source error statistics: which source is most reliable for what |
 | `perimeter_pairs.csv` | IoU, area ratio and Hausdorff distance for every pair of perimeters |
 | `flags.csv` | every issue found, with category and severity |
-| `fireset_ignition_patch.csv` | proposed new `Ignition_Lat`/`Ignition_Lon` for FireSET, with reasons |
-| `identical_point_pairs.csv` | sources that copy each other's coordinates (checks the lineage grouping) |
+| `fireset_ignition_patch.csv` | proposed new `Ignition_Lat`/`Ignition_Lon` for FireSET, with an `action` (replace / review) and the evidence |
+| `timing_by_lineage.csv` | discovery-time offsets per source and record lineage (clock and time-zone errors) |
+| `identical_point_pairs.csv` | sources that copy each other's coordinates, by record lineage |
 | `matched_records.csv` | the crosswalk: which record in each source matched each fire, and how |
 | `ignition_points.geojson`, `consensus_perimeters.geojson`, `source_perimeters.geojson` | layers for QGIS review |
 | `fire_source_audit.xlsx` | the main tables in one workbook |

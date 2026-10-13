@@ -129,6 +129,7 @@ consensus.
 - **Endpoint:** `https://services1.arcgis.com/jUJYIo9tSA7EHvfZ/arcgis/rest/services/CA_Perimeters_NIFC_FIRIS_public_view/FeatureServer/0`
 - **Gives:** dated operational perimeters (`poly_DateCurrent`, `source`, `mission`, `incident_number`, `area_acres`, `FireDiscoveryDate`).
 - **Lineage:** FIRIS-OPS. **Tier:** B (operational, not final). The project uses the latest polygon per incident.
+- **Status 2026-10-13:** disabled. The public view holds only the current season (476 polygons dated 2026-01-07 to 2026-10-12), so it cannot cover 2018–2025 fires.
 
 ### 13. USGS Combined wildland fire polygons *(unverified fields)*
 - Welty & Jeffries 2022, doi:10.5066/P9ZXGFY3. A merge of 40 agency datasets from the mid-1800s onward.

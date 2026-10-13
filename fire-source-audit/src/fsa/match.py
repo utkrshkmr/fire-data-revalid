@@ -48,6 +48,15 @@ def score_candidate(rec: pd.Series, fire: Fire, cfg: dict[str, Any]) -> tuple[fl
     # time
     window = float(cfg.get("date_window_days", 5))
     d = _days(rec.get("discovery_utc"), fire.start_utc)
+    if d is not None and d > float(cfg.get("max_fuzzy_days", 15)):
+        # a same-name fire in the same place weeks or seasons apart is a different fire (2026-10-13 run:
+        # 21 such matches, e.g. CAL FIRE "Peak" 2024 for Peak 2023)
+        return 0.0, "fuzzy", {"time_gap_days": round(d, 1)}
+    pdt = rec.get("perimeter_datetime_utc")
+    if d is None and fire.start_utc is not None and pdt is not None and not pd.isna(pdt):
+        lag = (pd.Timestamp(pdt) - fire.start_utc).days
+        if lag < -2 or lag > 400:  # a perimeter mapped before the fire, or seasons later, is another fire
+            return 0.0, "fuzzy", {"perimeter_lag_days": lag}
     s_time = 0.5 if d is None else max(0.0, 1.0 - d / window)
     comp["time"] = s_time
 
