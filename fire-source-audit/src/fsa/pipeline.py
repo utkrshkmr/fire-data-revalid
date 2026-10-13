@@ -3,7 +3,7 @@ from __future__ import annotations
 
 import json
 import logging
-from concurrent.futures import ThreadPoolExecutor, as_completed
+from concurrent.futures import ProcessPoolExecutor, ThreadPoolExecutor, as_completed
 from pathlib import Path
 from typing import Any
 
@@ -20,6 +20,22 @@ from .sources import DETECTION_COLUMNS, EvidenceSource, RecordSource, build_sour
 from .sources.http import Http
 
 log = logging.getLogger(__name__)
+
+
+def _goes_one(job: tuple) -> dict[str, Any]:
+    """One fire's GOES scan (module level so worker processes can run it)."""
+    from .goes import earliest_detection
+    key, lon, lat, t, cfg, path, force = job
+    p = Path(path)
+    if p.exists() and not force:
+        return {"source": "goes_fdc", "fire_key": key, "status": "cached"}
+    try:
+        hit = earliest_detection(lon, lat, t, cfg)
+        p.parent.mkdir(parents=True, exist_ok=True)
+        p.write_text(json.dumps(hit, default=str))
+        return {"source": "goes_fdc", "fire_key": key, "status": "ok", "rows": int(hit is not None)}
+    except Exception as e:  # noqa: BLE001
+        return {"source": "goes_fdc", "fire_key": key, "status": "error", "detail": repr(e)[:300]}
 
 
 class Pipeline:
@@ -105,34 +121,23 @@ class Pipeline:
         df.to_csv(self.out_dir / "fetch_status.csv", index=False)
         return df
 
-    def fetch_goes(self, fires: list[Fire], force: bool = False, workers: int = 8) -> list[dict[str, Any]]:
-        from .goes import earliest_detection
+    def fetch_goes(self, fires: list[Fire], force: bool = False, workers: int = 16) -> list[dict[str, Any]]:
         cfg = self.settings.raw.get("goes", {})
-
-        def one(f: Fire) -> dict[str, Any] | None:
+        jobs = []
+        for f in fires:
             p = self.cache_dir / "evidence" / "goes_fdc" / f"{f.key}.json"
-            if p.exists() and not force:
-                return {"source": "goes_fdc", "fire_key": f.key, "status": "cached"}
-            lon, lat = (f.ign_lon, f.ign_lat) if f.ign_lat is not None else f.center
             t = f.start_utc or f.first_detection_utc
             if t is None:
-                return None
-            try:
-                hit = earliest_detection(lon, lat, t, cfg)
-                p.parent.mkdir(parents=True, exist_ok=True)
-                p.write_text(json.dumps(hit, default=str))
-                return {"source": "goes_fdc", "fire_key": f.key, "status": "ok", "rows": int(hit is not None)}
-            except Exception as e:  # noqa: BLE001
-                return {"source": "goes_fdc", "fire_key": f.key, "status": "error", "detail": repr(e)[:300]}
-
-        # each fire reads ~100 five-minute files from S3; fires are independent, so scan several at once
+                continue
+            lon, lat = (f.ign_lon, f.ign_lat) if f.ign_lat is not None else f.center
+            jobs.append((f.key, lon, lat, t, cfg, str(p), force))
+        # NetCDF decoding is CPU-bound (~25 s per fire), so fires run in separate processes
         out = []
-        with ThreadPoolExecutor(max_workers=max(1, int(cfg.get("workers", workers)))) as ex:
-            for i, r in enumerate(ex.map(one, fires), 1):
-                if r:
-                    out.append(r)
-                if i % 50 == 0:
-                    log.info("goes_fdc: %d/%d fires", i, len(fires))
+        with ProcessPoolExecutor(max_workers=max(1, int(cfg.get("workers", workers)))) as ex:
+            for i, r in enumerate(ex.map(_goes_one, jobs), 1):
+                out.append(r)
+                if i % 25 == 0:
+                    log.info("goes_fdc: %d/%d fires", i, len(jobs))
         return out
 
     # ------------------------------------------------------------ match

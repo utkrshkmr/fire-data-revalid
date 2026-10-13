@@ -137,6 +137,24 @@ def identical_pairs(summary: pd.DataFrame, specs: dict[str, SourceSpec]) -> pd.D
     return pd.DataFrame(rows, columns=cols)
 
 
+def timing_by_lineage(errors: pd.DataFrame) -> pd.DataFrame:
+    """Discovery-time offsets per source and record lineage. A tight cluster at a whole number of hours away
+    from 0 is a clock or time-zone error in that lineage, not disagreement about the fire."""
+    cols = ["source", "lineage", "n", "median_offset_h", "share_within_15min", "modal_offset_h", "share_at_mode"]
+    if not len(errors) or "discovery_offset_h" not in errors:
+        return pd.DataFrame(columns=cols)
+    t = errors[errors["aspect"] == "timing"].copy()
+    t["off"] = pd.to_numeric(t["discovery_offset_h"], errors="coerce")
+    rows = []
+    for (src, lin), g in t.dropna(subset=["off"]).groupby(["source", "lineage"]):
+        r = g["off"].round(1)
+        mode = float(r.mode().iloc[0]) if len(r) else None
+        rows.append({"source": src, "lineage": lin, "n": len(g), "median_offset_h": round(float(g["off"].median()), 2),
+                     "share_within_15min": round(float((g["off"].abs() <= 0.25).mean()), 3),
+                     "modal_offset_h": mode, "share_at_mode": round(float((r == mode).mean()), 3)})
+    return pd.DataFrame(rows, columns=cols)
+
+
 # ---------------------------------------------------------------- charts
 
 
@@ -225,6 +243,7 @@ def write_all(out_dir: Path, results: list[FireResult], matched: gpd.GeoDataFram
     ss = source_summary(t["source_errors"], matched, n_fires, specs, settings_raw)
     t["source_summary"] = ss
     t["identical_point_pairs"] = identical_pairs(t["fire_summary"], specs)
+    t["timing_by_lineage"] = timing_by_lineage(t["source_errors"])
     paths: dict[str, Path] = {}
     for name, df in t.items():
         p = out_dir / f"{name}.csv"
@@ -234,7 +253,7 @@ def write_all(out_dir: Path, results: list[FireResult], matched: gpd.GeoDataFram
     try:
         with pd.ExcelWriter(out_dir / "fire_source_audit.xlsx") as xw:
             for name in ("source_summary", "fire_summary", "flags", "fireset_ignition_patch", "source_errors",
-                         "perimeter_pairs"):
+                         "perimeter_pairs", "identical_point_pairs", "timing_by_lineage"):
                 _tz_naive(t[name]).to_excel(xw, sheet_name=name[:31], index=False)
         paths["xlsx"] = out_dir / "fire_source_audit.xlsx"
     except Exception:  # noqa: BLE001 - csv outputs are the record
@@ -310,6 +329,10 @@ Consensus counts each upstream lineage once; per-source errors compare each sour
 <p class="muted">Pairs that copy each other often but sit in different lineages in sources.yaml should be merged into one lineage,
 or the consensus counts the same upstream record twice.</p>
 <div class="wrap">{_table_html(t.get("identical_point_pairs"), 40)}</div>
+<h2>Discovery-time offsets by source and lineage</h2>
+<p class="muted">Offsets from the other lineages' median discovery time. A large share at one whole-hour mode
+means a clock or time-zone error in that lineage.</p>
+<div class="wrap">{_table_html(t.get("timing_by_lineage"), 60)}</div>
 <h2>Proposed FireSET ignition corrections</h2><div class="wrap">{_table_html(patch, 80)}</div>
 <p class="muted">Full tables: fire_summary.csv, source_errors.csv, perimeter_pairs.csv, flags.csv,
 fireset_ignition_patch.csv, source_summary.csv, fire_source_audit.xlsx. GIS layers: ignition_points.geojson,
