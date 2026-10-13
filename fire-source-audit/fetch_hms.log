@@ -1,2 +1,0 @@
-2026-10-13 12:27:03,397 INFO fsa: fetching 586 fires
-2026-10-13 12:27:59,528 INFO fsa.sources: HMS 2019-07-10 unavailable: 404 Client Error: Not Found for url: https://satepsanone.nesdis.noaa.gov/pub/FIRE/web/HMS/Fire_Points/Text/2019/07/hms_fire20190710.txt
