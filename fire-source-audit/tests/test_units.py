@@ -47,7 +47,9 @@ def test_cause_classes():
 
 def test_coord_decimals():
     assert coord_decimals(39.82, -121.44) == 2
-    assert coord_decimals(39.820005, -121.440013) == 6
+    assert coord_decimals(39.820005, -121.440013) == 2   # reprojection noise on a 2-decimal report
+    assert coord_decimals(40.942635, -122.427114) == 5   # 5 is the finest reported (~1 m)
+    assert coord_decimals(40.94263, -122.4271) == 5
 
 
 def test_esri_polygon_with_hole():
@@ -151,3 +153,6 @@ def test_rounded_copy_detected():
     fireset = pt(39.820005, -121.440013, 6)          # WFIGS geometry with float noise
     assert _copied_point(fireset, pt(39.82, -121.44, 3))       # MTBS Event_ID
     assert not _copied_point(fireset, pt(39.8134, -121.4347, 4))  # CAL FIRE map pin, ~900 m away
+    precise = pt(40.942635, -122.427114, 5)
+    assert _copied_point(precise, pt(40.943, -122.427, 3))       # Event_ID rounding of a precise IRWIN point
+    assert not _copied_point(pt(39.82, -121.44, 2), pt(39.81861, -121.43711, 5))  # independent, rounds alike

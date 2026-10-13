@@ -156,6 +156,8 @@ class LocalVector(RecordSource):
             conds = [f"{c} = '{v}'" for c, v in self.spec.filter.items() if c in names]
             if conds:
                 kwargs["where"] = " AND ".join(conds)
+        # national layers: read only features intersecting California (geopandas reprojects the box)
+        kwargs["bbox"] = gpd.GeoSeries([box(*CA_BBOX)], crs="EPSG:4326")
         gdf = gpd.read_file(self.path, **kwargs)
         if not isinstance(gdf, gpd.GeoDataFrame) or gdf.geometry is None or gdf.geometry.isna().all():
             lat = resolve_column(gdf.columns, self.spec.fields.get("lat"))
@@ -202,6 +204,9 @@ def _firms_time(acq_date: pd.Series, acq_time: pd.Series) -> pd.Series:
 
 
 def _standardize_firms(df: pd.DataFrame, source: str) -> pd.DataFrame:
+    if df is not None and "type" in df.columns:
+        # FIRMS archive type: 0 presumed vegetation fire, 1 volcano, 2 static land source (industry), 3 offshore
+        df = df[pd.to_numeric(df["type"], errors="coerce").fillna(0) == 0]
     if df is None or len(df) == 0:
         return pd.DataFrame(columns=DETECTION_COLUMNS)
     out = pd.DataFrame({

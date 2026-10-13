@@ -34,7 +34,7 @@ Each candidate record is scored against the FireSET fire:
 
 The fuzzy score is halved when the names differ, unless place, date and size all agree strongly. A record is
 accepted at ≥ 0.60. It is flagged *ambiguous* when a different record scores within 0.05 of it. Within one
-source, the best record per lineage is kept. Multi-part perimeters of the same fire are dissolved. For
+source, the single best record is kept (its lineage may be set per record). Multi-part perimeters of the same fire are dissolved. For
 operational feeds with several dated polygons, the latest polygon is kept. An ID match whose point lies more
 than 20 km from the fire is flagged as an identifier conflict.
 

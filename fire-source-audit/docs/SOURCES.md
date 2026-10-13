@@ -6,6 +6,21 @@ contributes, how it links to other sources, and the caveats that matter when com
 Checked against live service metadata on 2026-10-13 unless marked *unverified*. Run `fsa probe` before a full
 run; it checks every endpoint and field mapping and writes `out/probe_report.csv`.
 
+**Corrections from the 2026-10-13 live run** (each is fixed in `config/sources.yaml` and the adapters):
+
+- InFORM has no `IrwinID` or text `FireCause*` fields: IDs are in `RelatedIrwinIDs`, cause is coded `FireCauseID`
+  (1 Natural, 2 Undetermined, 3 Human), and `FinalAcres` is null for every California record (size is `IncidentSize`).
+- InFORM's California 2018–19 records were back-filled from FireStat and WFMI (`CreatedBySystem`), so they are
+  USFS-FIRESTAT / DOI-WFMI lineage, not IRWIN. CAL FIRE CAD records start in 2020.
+- The CAL FIRE API moved to `incidents.fire.ca.gov` (the old host 301-redirects and its CDN refuses non-generic user
+  agents). It returns one season per call (`&year=YYYY`), and `Started` is UTC with a `Z` suffix, not Pacific.
+- FPA-FOD 7th edition has no `IRWIN_ID` or `UNIQUE_FIRE_ID` columns. Its California 2018–24 records are copies of
+  the systems listed here (`SOURCE_SYSTEM`): FS-FIRESTAT and DOI-WFMI for 2018–19, IA-IRWIN for 2020, IA-INFORM for
+  2021–24, plus ST-NASF / ST-CACDF state reports. Lineage is taken per record.
+- MTBS `BurnBndLat`/`BurnBndLon` are the burned-area centroid. The reported origin is encoded in `Event_ID`
+  (`CA3982012144020181108` = 39.820, −121.440).
+- FRAP, FPA-FOD and MTBS dates are calendar dates stored as 00:00 UTC; they are read as Pacific dates.
+
 **Trust tiers.** A = record of the responsible agency, or independent physical measurement.
 B = official, but operational or second-hand. C = derivative merge, kept for comparison and left out of the
 consensus.
@@ -37,19 +52,19 @@ consensus.
 ### 2. NIFC InFORM Fire Occurrence Data Records (public)
 - **Agency:** NIFC, from the interagency InFORM final fire reporting system.
 - **Endpoint:** `https://services3.arcgis.com/T4QMspbfLg3qTGWY/arcgis/rest/services/InFORM_FireOccurrence_Public/FeatureServer/0`
-- **Gives:** final-report point of origin, `FireDiscoveryDateTime`, `FinalAcres`, `CalculatedAcres`, `DiscoveryAcres`, POO jurisdiction.
-- **Coverage:** complete from 2020 to the present; earlier years are being back-filled.
-- **Lineage:** IRWIN (InFORM writes back to IRWIN). **Tier:** A.
+- **Gives:** final-report point of origin (`InitialLatitude`/`InitialLongitude`), `FireDiscoveryDateTime`, `IncidentSize`, `CalculatedAcres`, `DiscoveryAcres`, coded `FireCauseID`, `RelatedIrwinIDs`, `CreatedBySystem`, POO jurisdiction. `FinalAcres` exists but is empty for California.
+- **Coverage:** complete from 2020 to the present; California 2018–19 holds back-filled FireStat (USFS) and WFMI (BLM) records only.
+- **Lineage:** IRWIN (InFORM writes back to IRWIN), except records whose `CreatedBySystem` is FireStat, WFMI or FMIS. **Tier:** A.
 - **Caveats:** NIFC asks users not to run repeated relative-date queries such as "in the last N days". The project uses fixed date ranges.
 
 ### 3. CAL FIRE incident list (fire.ca.gov)
 - **Agency:** CAL FIRE.
-- **Endpoint:** `https://www.fire.ca.gov/umbraco/api/IncidentApi/List?inactive=true`, or the GeoJSON variant `.../GeoJsonList?inactive=true`.
-- **Gives:** `Latitude`/`Longitude` (incident map location), `Started` (Pacific local time), `AcresBurned`, `PercentContained`, `County`, `AdminUnit`, `Url`, `UniqueId`.
+- **Endpoint:** `https://incidents.fire.ca.gov/umbraco/api/IncidentApi/List?inactive=true&year=YYYY` (one season per call).
+- **Gives:** `Latitude`/`Longitude` (incident map location), `Started` (UTC, `Z` suffix), `AcresBurned`, `PercentContained`, `County`, `AdminUnit`, `Url`, `UniqueId`. `ExtinguishedDate` is not used: 294 records carry a bulk closure date of 2019-01-04.
 - **Coverage:** CAL FIRE and State Responsibility Area incidents, 2013 onward. Federal-only fires are often missing.
 - **Keys:** none shared with IRWIN, so the project matches on name, date and location.
 - **Lineage:** CALFIRE-OPS. **Tier:** A.
-- **Caveats:** The site's robots.txt disallows crawling. The project makes one cached API call per run and does not scrape incident pages.
+- **Caveats:** The site's robots.txt disallows crawling. The project makes one cached API call per season (eight for 2018–2025) and does not scrape incident pages.
 
 ### 4. USFS EDW Fire Occurrence Point (FireStat)
 - **Agency:** USDA Forest Service Enterprise Data Warehouse.
@@ -63,15 +78,15 @@ consensus.
 ### 5. FPA Fire Occurrence Database (FPA-FOD), 7th edition, 1992–2024
 - **Agency:** USDA Forest Service Research Data Archive. Short, K.C. 2026, doi:10.2737/RDS-2013-0009.7.
 - **Access:** download from the Research Data Archive (GPKG, GDB, SQLite or ACCDB; table `Fires`). There is also a map service at `apps.fs.usda.gov/ArcX/rest/services/EDW/EDW_FireOccurrence6thEdition_01` (6th edition).
-- **Gives:** `LATITUDE`/`LONGITUDE` (at least PLSS-section precision), `DISCOVERY_DATE` + `DISCOVERY_TIME` (local), `CONT_DATE` + `CONT_TIME`, `FIRE_SIZE`, NWCG cause classification, `MTBS_ID`, ICS-209-PLUS join IDs.
-- **Coverage:** 2.66 million U.S. records, compiled from federal, state and local reporting systems including CAL FIRE's.
-- **Lineage:** FPA-FOD. **Tier:** A.
-- **Caveats:** Column names in the config come from the 6th edition. `fsa probe` reports any that changed. 2025 fires are not covered.
+- **Gives:** `LATITUDE`/`LONGITUDE` (at least PLSS-section precision), `DISCOVERY_DATE` + `DISCOVERY_TIME` (local), `CONT_DATE` + `CONT_TIME`, `FIRE_SIZE`, NWCG cause classification, `SOURCE_SYSTEM`, `LOCAL_INCIDENT_ID`, `FIRE_CODE`, `MTBS_ID`, ICS-209-PLUS join IDs. No IRWIN or UniqueFireIdentifier column.
+- **Coverage:** 2,661,383 U.S. records, 1992–2024 (`FPA_FOD_20260615.gpkg`, 57,108 California records for 2018–24).
+- **Lineage:** per record from `SOURCE_SYSTEM`. California 2018–24 is FS-FIRESTAT, DOI-WFMI, IA-IRWIN (2020), IA-INFORM (2021–24), ST-NASF and ST-CACDF, so for 2020 onward it is a copy of IRWIN and cannot confirm FireSET. **Tier:** A.
+- **Caveats:** 2025 fires are not covered.
 
-### 6. MTBS fire occurrence locations *(unverified)*
+### 6. MTBS fire occurrence locations
 - **Agency:** USGS EROS and USDA Forest Service GTAC (Monitoring Trends in Burn Severity).
-- **Access:** national download from the USGS burn-severity portal (`https://burnseverity.cr.usgs.gov/direct-download?product=MTBS`).
-- **Gives:** `BurnBndLat`/`BurnBndLon` (reported location), `Ig_Date`, `BurnBndAc`, `Event_ID`, and `irwinID` in recent releases.
+- **Access:** composite shapefile `.../MTBS_Fire/data/composite_data/fod_pt_shapefile/mtbs_fod_pts_data.zip` on `edcintl.cr.usgs.gov` (linked from the burn-severity portal). California records run to 2025-09.
+- **Gives:** reported location encoded in `Event_ID` (thousandths of a degree), `Ig_Date`, `BurnBndAc`, `irwinID`. `BurnBndLat`/`BurnBndLon` and the point geometry are the burned-area centroid, not the origin.
 - **Lineage:** MTBS-REPORTED. **Tier:** B, because the point is carried in from agency reports.
 
 ## B. Perimeters
@@ -102,7 +117,7 @@ consensus.
 - **Gives:** `gisacres`, `totalacres`, `perimeterdatetime`, `featurecat`, `accuracy`, `uniqfireid`.
 - **Coverage:** USFS fires only. **Lineage:** USFS-FIRESTAT. **Tier:** A.
 
-### 11. MTBS burned area boundaries *(unverified)*
+### 11. MTBS burned area boundaries
 - **Agency:** USGS EROS and USFS GTAC.
 - **Gives:** Landsat dNBR-derived burn boundary, `BurnBndAc`, `Ig_Date`, `Event_ID`, and `irwinID` in recent releases.
 - **Coverage:** fires of 1,000 acres or more in the western U.S., 1984 to the latest release (about a 1–2 year lag).

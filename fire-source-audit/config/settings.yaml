@@ -10,7 +10,7 @@ paths:
     fpa_fod: ../downloads/fpa_fod/Data/FPA_FOD_20260615.gpkg   # RDS-2013-0009.7 GPKG, layer "Fires"
     mtbs_perimeters: ../downloads/mtbs/perims/mtbs_perims_DD.shp   # MTBS composite burned-area boundaries
     mtbs_points: ../downloads/mtbs/pts/mtbs_FODpoints_DD.shp       # MTBS composite fire-occurrence points
-    usgs_combined: ../downloads/usgs_combined/Fire_Feature_Data_Pro2_8.gdb
+    usgs_combined: ../downloads/usgs_combined/Fire_Feature_Data.gdb   # ScienceBase 61aa537d (data through 2020)
     viirs_h5_pattern: data/run_{year}/detection_{year}_filtered_350.h5
     firms_csv_glob: ../downloads/firms/*.csv
 
@@ -39,6 +39,7 @@ ignition:
   perimeter_tolerance_m: 375   # a point this close to the consensus perimeter counts as on the perimeter
   viirs_near_m: 1500    # a point this close to the first-overpass detections counts as consistent
   first_overpass_window_min: 60  # detections within this many minutes of the earliest form the first overpass
+  first_overpass_max_lead_h: 12   # ignore heat inside the perimeter more than this long before the earliest reported discovery
   patch_threshold_m: 500  # propose a FireSET correction when the recommended point moves more than this
 
 perimeter:
@@ -49,7 +50,8 @@ perimeter:
 timing:
   pacific_tz: America/Los_Angeles
   # time offsets (hours) whose size suggests a time-zone bug rather than a real disagreement
-  tz_suspect_offsets_h: [7, 8]
+  # 7/8 h = local time tagged as UTC; 2/5 h = FireStat's clock (2 h ahead of Pacific, then tagged UTC by EDW: -5 h)
+  tz_suspect_offsets_h: [2, 5, 7, 8]
   tz_suspect_tolerance_h: 0.25
 
 goes:

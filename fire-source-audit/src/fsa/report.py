@@ -82,6 +82,11 @@ def source_summary(errors: pd.DataFrame, matched: pd.DataFrame, n_fires: int,
                     row["ign_share_outside_perimeter"] = round(float((sp_d[sp_d.notna()] > tol).mean()), 3)
                 vd = pd.to_numeric(ig["dist_to_first_viirs_m"], errors="coerce")
                 row["ign_median_dist_first_viirs_m"] = _q(vd, .5)
+                if "initial_offset_m" in ig:
+                    io = pd.to_numeric(ig["initial_offset_m"], errors="coerce")
+                    if io.notna().any():
+                        row["ign_initial_report_moved_share_gt_500m"] = round(float((io[io.notna()] > 500).mean()), 3)
+                        row["ign_initial_report_median_offset_m"] = _q(io, .5)
                 dec = pd.to_numeric(ig["coord_decimals"], errors="coerce")
                 if dec.notna().any():
                     row["ign_share_coarse_coords"] = round(float((dec[dec.notna()] <= 2).mean()), 3)
@@ -112,9 +117,12 @@ def source_summary(errors: pd.DataFrame, matched: pd.DataFrame, n_fires: int,
 
 
 def identical_pairs(summary: pd.DataFrame, specs: dict[str, SourceSpec]) -> pd.DataFrame:
-    """How often two sources report the same ignition coordinates (< 1 m) for a fire."""
+    """How often two sources report the same ignition point (within 5 m, or one a rounded copy of the other).
+
+    Pairs are keyed by source and the lineage each record was given (per record for FPA-FOD and InFORM)."""
+    cols = ["source_a", "lineage_a", "source_b", "lineage_b", "fires_identical", "same_lineage_in_config"]
     if "ign_identical_pairs" not in summary:
-        return pd.DataFrame(columns=["source_a", "source_b", "fires_identical", "same_lineage_in_config"])
+        return pd.DataFrame(columns=cols)
     counts: dict[str, int] = {}
     for v in summary["ign_identical_pairs"].dropna():
         for pair in str(v).split(";"):
@@ -122,11 +130,11 @@ def identical_pairs(summary: pd.DataFrame, specs: dict[str, SourceSpec]) -> pd.D
                 counts[pair] = counts.get(pair, 0) + 1
     rows = []
     for pair, n in sorted(counts.items(), key=lambda kv: -kv[1]):
-        a, b = pair.split("=")
-        la = specs[a].lineage if a in specs else a
-        lb = specs[b].lineage if b in specs else b
-        rows.append({"source_a": a, "source_b": b, "fires_identical": n, "same_lineage_in_config": la == lb})
-    return pd.DataFrame(rows, columns=["source_a", "source_b", "fires_identical", "same_lineage_in_config"])
+        (a, la), (b, lb) = [(x.split("[")[0], x.split("[")[1].rstrip("]")) if "[" in x else (x, "")
+                            for x in pair.split("=")]
+        rows.append({"source_a": a, "lineage_a": la, "source_b": b, "lineage_b": lb, "fires_identical": n,
+                     "same_lineage_in_config": la == lb})
+    return pd.DataFrame(rows, columns=cols)
 
 
 # ---------------------------------------------------------------- charts

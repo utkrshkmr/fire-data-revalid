@@ -37,7 +37,9 @@ def _copied_point(a: dict[str, Any], b: dict[str, Any]) -> bool:
         return False
     lo, hi = (a, b) if da < db else (b, a)
     d = int(lo["decimals"])
-    if d > 4:
+    # at 2 decimals (~1 km cells) any independent point within ~500 m rounds to the coarse one, so only
+    # 3-4 decimal roundings (MTBS Event_ID, 0.001 deg) count; exact coarse copies are caught by distance above
+    if not 3 <= d <= 4:
         return False
     tol = 0.1 * 10 ** -d
     return abs(round(hi["lat"], d) - lo["lat"]) < tol and abs(round(hi["lon"], d) - lo["lon"]) < tol
@@ -87,7 +89,7 @@ class FireAnalyzer:
         res.summary["sources_matched"] = ";".join(sorted(set(recs["source"]) - {"fireset_subset"})) if len(recs) else ""
 
         cons_poly_m = self._perimeters(fire, recs, frame, res)
-        sat = self._satellite(fire, det, cons_poly_m, frame, res, goes_hit)
+        sat = self._satellite(fire, recs, det, cons_poly_m, frame, res, goes_hit)
         self._ignition(fire, recs, frame, cons_poly_m, sat, res)
         self._timing(fire, recs, sat, res)
         self._size(fire, recs, cons_poly_m, res)
@@ -182,8 +184,20 @@ class FireAnalyzer:
         return cons
 
     # ------------------------------------------------------------ satellite evidence
-    def _satellite(self, fire: Fire, det: pd.DataFrame | None, cons_m, frame: LocalFrame, res: FireResult,
-                   goes_hit: dict[str, Any] | None) -> dict[str, Any]:
+    def _earliest_discovery(self, fire: Fire, recs: pd.DataFrame) -> pd.Timestamp | None:
+        """Earliest datetime-precision discovery among consensus sources, else FireSET's start."""
+        ts = []
+        if len(recs) and "discovery_utc" in recs:
+            for _, r in recs.iterrows():
+                if self._eligible(r["source"]) and _ts_ok(r.get("discovery_utc")) \
+                        and (r.get("discovery_precision") or "datetime") == "datetime":
+                    ts.append(pd.Timestamp(r["discovery_utc"]))
+        if ts:
+            return min(ts)
+        return fire.start_utc
+
+    def _satellite(self, fire: Fire, recs: pd.DataFrame, det: pd.DataFrame | None, cons_m, frame: LocalFrame,
+                   res: FireResult, goes_hit: dict[str, Any] | None) -> dict[str, Any]:
         out: dict[str, Any] = {}
         if goes_hit:
             out["goes_time"] = pd.Timestamp(goes_hit["time_utc"])
@@ -201,6 +215,17 @@ class FireAnalyzer:
             if inside.any():
                 d = d[inside]
         d = d.sort_values("time_utc")
+        t_raw = d["time_utc"].iloc[0]
+        res.summary["viirs_first_raw_utc"] = t_raw
+        # Heat inside the perimeter long before any agency discovery is usually a neighbouring or earlier fire
+        # (Delta/Hirz 2018), so the first overpass is taken from max_lead_h before the earliest reported discovery.
+        anchor = self._earliest_discovery(fire, recs)
+        lead = pd.Timedelta(hours=float(self.ign.get("first_overpass_max_lead_h", 12)))
+        if anchor is not None:
+            early = d["time_utc"] < anchor - lead
+            res.summary["viirs_n_before_lead_window"] = int(early.sum())
+            if (~early).any():
+                d = d[~early]
         t_first = d["time_utc"].iloc[0]
         win = pd.Timedelta(minutes=float(self.ign.get("first_overpass_window_min", 60)))
         first = d[d["time_utc"] <= t_first + win]
@@ -231,12 +256,32 @@ class FireAnalyzer:
                 pts.append({"source": r["source"], "lineage": r["lineage"], "trust": r.get("trust") or "B",
                             "lat": float(r["lat"]), "lon": float(r["lon"]), "x": x, "y": y,
                             "decimals": r.get("coord_decimals"), "kind": r.get("ignition_kind"),
+                            "initial_offset_m": r.get("initial_offset_m"),
                             "eligible": self._eligible(r["source"]) and r["source"] != "fireset_subset"})
         # identical coordinates across sources reveal shared upstream records (tests the lineage grouping)
-        same = sorted({"=".join(sorted((a["source"], b["source"]))) for a, b in pairwise(pts)
-                       if a["source"] != b["source"] and _copied_point(a, b)})
-        res.summary["ign_identical_pairs"] = ";".join(same)
+        copies = [(a, b) for a, b in pairwise(pts) if a["source"] != b["source"] and _copied_point(a, b)]
+        res.summary["ign_identical_pairs"] = ";".join(sorted({
+            "=".join(sorted((f"{a['source']}[{a['lineage']}]", f"{b['source']}[{b['lineage']}]"))) for a, b in copies}))
         elig = [p for p in pts if p["eligible"]]
+        # a point copied across lineages is one report, not two: merge those lineages for this fire
+        parent = {p["lineage"]: p["lineage"] for p in elig}
+
+        def root(k: str) -> str:
+            while parent[k] != k:
+                k = parent[k]
+            return k
+        for a, b in copies:
+            if a["eligible"] and b["eligible"] and a["lineage"] != b["lineage"]:
+                ra, rb = root(a["lineage"]), root(b["lineage"])
+                if ra != rb:
+                    parent[max(ra, rb)] = min(ra, rb)
+        groups: dict[str, list[str]] = {}
+        for k in parent:
+            groups.setdefault(root(k), []).append(k)
+        merged = {k: "+".join(sorted(v)) for r, v in groups.items() for k in v}
+        res.summary["ign_lineages_merged"] = ";".join(sorted({m for m in merged.values() if "+" in m}))
+        for p in elig:
+            p["lineage"] = merged[p["lineage"]]
         lineages: dict[str, list[dict]] = {}
         for p in elig:
             lineages.setdefault(p["lineage"], []).append(p)
@@ -289,6 +334,7 @@ class FireAnalyzer:
             pt = Point(p["x"], p["y"])
             e = {"fire_key": fire.key, "source": p["source"], "lineage": p["lineage"], "aspect": "ignition",
                  "lat": p["lat"], "lon": p["lon"], "coord_decimals": p["decimals"],
+                 "initial_offset_m": p.get("initial_offset_m"),
                  "dist_to_others_m": None if ref is None else round(float(np.linalg.norm(np.array([p["x"], p["y"]]) - ref)), 1),
                  "dist_to_nearest_other_m": nearest_other(p),
                  "dx_m": None if ref is None else round(p["x"] - ref[0], 1),

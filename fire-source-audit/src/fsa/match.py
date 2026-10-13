@@ -97,9 +97,9 @@ def match_fire(fire: Fire, cands: pd.DataFrame, cfg: dict[str, Any], is_perimete
     accept = float(cfg.get("accept_score", 0.6))
     margin = float(cfg.get("ambiguity_margin", 0.05))
     out: list[dict[str, Any]] = []
-    by_lineage: dict[str, list] = {}
-    for item in scored:
-        by_lineage.setdefault(item[3]["lineage"], []).append(item)
+    # one record per source and fire: with per-record lineages (FPA-FOD SOURCE_SYSTEM, InFORM CreatedBySystem)
+    # a per-lineage pick would accept a different nearby fire as a second "lineage" of the same source
+    by_lineage: dict[str, list] = {"*": scored}
     for lineage, items in by_lineage.items():
         items.sort(key=lambda t: -t[0])
         best_s, best_m, best_c, best = items[0]

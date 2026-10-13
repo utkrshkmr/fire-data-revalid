@@ -14,7 +14,7 @@ from .config import SourceSpec
 CANONICAL_COLUMNS = [
     "source", "lineage", "trust", "source_record_id",
     "name", "irwin_id", "irwin_ids", "unique_fire_id", "local_number", "unit", "year", "complex_name",
-    "lat", "lon", "ignition_kind", "coord_decimals",
+    "lat", "lon", "ignition_kind", "coord_decimals", "initial_offset_m",
     "discovery_utc", "discovery_precision", "containment_utc", "control_utc", "out_utc",
     "size_acres", "cause_raw", "cause_class",
     "perimeter_datetime_utc", "map_method", "perimeter_source",
@@ -220,19 +220,22 @@ def classify_cause(val: Any, codes: str | None = None) -> str | None:
 # ---------------------------------------------------------------- coordinates
 
 
-def coord_decimals(lat: Any, lon: Any) -> int | None:
-    """Fewest decimal places carried by either coordinate (a proxy for reported precision)."""
+def coord_decimals(lat: Any, lon: Any, tol: float = 2e-5) -> int | None:
+    """Fewest decimal places that reproduce both coordinates to within `tol` degrees (about 2 m).
+
+    The tolerance absorbs float32 storage and Web Mercator round trips, so 39.820005 counts as 2 decimals."""
     def dec(v: Any) -> int | None:
         if v is None:
             return None
-        s = repr(float(v))
-        if "e" in s:
-            return 0
-        return len(s.split(".")[1].rstrip("0")) if "." in s else 0
+        x = float(v)
+        for d in range(0, 7):
+            if abs(x - round(x, d)) < tol:
+                return d
+        return 7
     a, b = dec(lat), dec(lon)
     if a is None or b is None:
         return None
-    return min(a, b)
+    return max(a, b)
 
 
 _MTBS_EVENT_RE = re.compile(r"^[A-Z]{2}(\d{5})(\d{6})(\d{8})$")
@@ -317,6 +320,10 @@ def normalize_rows(df: pd.DataFrame, spec: SourceSpec, geometry_col: str | None 
             # an Event_ID point is always thousandths of a degree, even when trailing zeros vanish (39.82)
             rec["coord_decimals"] = 3 if spec.raw.get("point_from") == "mtbs_event_id" else coord_decimals(lat, lon)
             rec["ignition_kind"] = spec.ignition_kind
+            ilat, ilon = pick(row, spec, "initial_lat", cols), pick(row, spec, "initial_lon", cols)
+            if valid_latlon(ilat, ilon):
+                from .geo import haversine_m
+                rec["initial_offset_m"] = round(haversine_m(float(ilat), float(ilon), rec["lat"], rec["lon"]), 1)
 
         tz = spec.datetime_tz or "UTC"
         # calendar-date sources: keep the stored date, localise it to the source's zone, then add any HHMM
@@ -346,7 +353,12 @@ def normalize_rows(df: pd.DataFrame, spec: SourceSpec, geometry_col: str | None 
         if rec["year"] is None and disc is not None:
             rec["year"] = int(disc.tz_convert("America/Los_Angeles").year)
         if geometry_col in df.columns:
-            rec["geometry"] = row[geometry_col]
+            g = row[geometry_col]
+            if g is not None and not getattr(g, "is_empty", True) and g.geom_type in ("Polygon", "MultiPolygon") \
+                    and not g.is_valid:
+                from .geo import clean_polygon  # agency perimeters include self-intersecting rings
+                g = clean_polygon(g)
+            rec["geometry"] = g
         out.append(rec)
     res = pd.DataFrame(out, columns=CANONICAL_COLUMNS + (["geometry"] if geometry_col in df.columns else []))
     return res

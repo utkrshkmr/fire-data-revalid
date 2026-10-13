@@ -39,7 +39,7 @@ sources:
     roles: [ignition, timing, size, cause]
     lineage: IRWIN
     trust: A
-    ignition_kind: initial lat/long (IRWIN point of origin)
+    ignition_kind: IRWIN point of origin (feature geometry)
     datetime_tz: UTC
     fields:
       name: [IncidentName]
@@ -48,8 +48,10 @@ sources:
       local_number: [LocalIncidentIdentifier]
       unit: [POOProtectingUnit]
       complex_name: [CpxName]
-      lat: [InitialLatitude]
-      lon: [InitialLongitude]
+      # the feature geometry is IRWIN's current point of origin (what FireSET uses); InitialLatitude/Longitude is
+      # the first report and differs from it on about half the fires (2026-10-13), so it is kept as a side value
+      initial_lat: [InitialLatitude]
+      initial_lon: [InitialLongitude]
       discovery: [FireDiscoveryDateTime]
       containment: [ContainmentDateTime]
       control: [ControlDateTime]
@@ -83,8 +85,8 @@ sources:
       unique_fire_id: [UniqueFireIdentifier]
       local_number: [LocalIncidentIdentifier]
       unit: [POOProtectingUnit]
-      lat: [InitialLatitude, POOLatitude]
-      lon: [InitialLongitude, POOLongitude]
+      initial_lat: [InitialLatitude]      # point from the feature geometry, as for WFIGS
+      initial_lon: [InitialLongitude]
       discovery: [FireDiscoveryDateTime]
       containment: [ContainmentDateTime]
       control: [ControlDateTime]
@@ -356,16 +358,20 @@ sources:
     agency: U.S. Geological Survey (doi:10.5066/P9ZXGFY3)
     kind: local_vector
     path_key: usgs_combined
+    layer: USGS_Wildland_Fire_Combined_Dataset
     geometry: polygon
     roles: [perimeter]
     lineage: USGS-COMBINED
     trust: C
     consensus: false
     notes: "derivative merge of 40 agency datasets; reported for comparison, excluded from consensus"
+    coverage: "fires through 2020 (2021 release), so only the 2018-2020 FireSET fires can match"
     fields:
       name: [Listed_Fire_Names, Fire_Name]
+      irwin_id: [Listed_Fire_IRWIN_IDs]
       year: [Fire_Year]
-    verified: unverified
+      perimeter_source: [Source_Datasets]
+    verified: "Fire_Feature_Data.gdb downloaded 2026-10-13"
 
   # ---------------------------------------------------------------- satellite evidence
   viirs_fireset:
@@ -376,6 +382,7 @@ sources:
     roles: [evidence]
     lineage: SAT-LEO
     trust: A
+    enabled: false    # FireSET's detection_{year}_filtered_350.h5 files are not on this machine; FIRMS CSVs used instead
     verified: "format from FireSET load_saved_viirs_detections"
 
   viirs_firms_csv:
@@ -386,8 +393,8 @@ sources:
     roles: [evidence]
     lineage: SAT-LEO
     trust: A
-    enabled: false
-    verified: "standard FIRMS archive columns"
+    enabled: true     # yearly US archives, S-NPP (viirs-snpp) + NOAA-20 (viirs-jpss1), 2018-2025, type 0 only
+    verified: "FIRMS country archives downloaded 2026-10-13"
 
   goes_fdc:
     name: NOAA GOES-R ABI Fire Detection and Characterization (CONUS, 5 min)
