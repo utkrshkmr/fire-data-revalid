@@ -23,4 +23,3 @@ report/*.toc
 report/*.fls
 report/*.fdb_latexmk
 report/*.synctex.gz
-report/findings.pdf
