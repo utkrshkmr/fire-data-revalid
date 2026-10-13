@@ -78,10 +78,19 @@ def iou(a: BaseGeometry | None, b: BaseGeometry | None) -> float | None:
     return a.intersection(b).area / union
 
 
-def hausdorff_m(a: BaseGeometry | None, b: BaseGeometry | None) -> float | None:
+def hausdorff_m(a: BaseGeometry | None, b: BaseGeometry | None, simplify_m: float | None = None) -> float | None:
+    """Boundary Hausdorff distance on simplified boundaries: raster-traced perimeters (MTBS, FIRIS) carry tens of
+    thousands of vertices and the exact distance is O(n*m). The tolerance (default: 10 m, or sqrt(area)/500 for
+    large fires, ~125 m for Dixie) bounds the error of the result."""
     if a is None or b is None:
         return None
-    return a.boundary.hausdorff_distance(b.boundary)
+    tol = simplify_m if simplify_m is not None else max(10.0, math.sqrt(max(a.area, b.area)) / 500)
+    return a.boundary.simplify(tol).hausdorff_distance(b.boundary.simplify(tol))
+
+
+def zone(poly: BaseGeometry, buffer_m: float) -> BaseGeometry:
+    """A polygon grown by buffer_m, simplified first (buffering a raster-traced perimeter costs minutes)."""
+    return poly.simplify(min(100.0, buffer_m / 10)).buffer(buffer_m)
 
 
 def centroid_offset_m(a: BaseGeometry | None, b: BaseGeometry | None) -> float | None:

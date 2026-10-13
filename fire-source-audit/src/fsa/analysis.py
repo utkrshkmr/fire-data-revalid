@@ -7,12 +7,14 @@ from typing import Any
 
 import numpy as np
 import pandas as pd
+import shapely
 from shapely.geometry import Point
 
 from .config import Settings, SourceSpec
 from .fires import Fire
 from .geo import (LocalFrame, area_acres, centroid_offset_m, clean_polygon, geometric_median, hausdorff_m,
                   iou, medoid, pairwise, signed_distance_to_polygon_m, vote_consensus)
+from .geo import zone as buffer_zone
 
 TRUST_W = {"A": 1.0, "B": 0.7, "C": 0.4, "X": 0.0}
 
@@ -208,7 +210,7 @@ class FireAnalyzer:
             hms = det[det["source"] == "hms_points"].dropna(subset=["lat", "lon", "time_utc"])
             det = det[det["source"] != "hms_points"]
             if len(hms) and cons_m is not None:
-                zone = cons_m.buffer(2000)
+                zone = buffer_zone(cons_m, 2000)
                 hms = hms[[zone.contains(Point(*frame.xy(lo, la))) for lo, la in zip(hms["lon"], hms["lat"])]]
             anchor = self._earliest_discovery(fire, recs)
             if len(hms) and anchor is not None:
@@ -222,11 +224,10 @@ class FireAnalyzer:
             res.summary["viirs_n"] = 0
             return out
         d = det.dropna(subset=["lat", "lon", "time_utc"]).copy()
-        xy = np.array([frame.xy(lo, la) for lo, la in zip(d["lon"], d["lat"])])
-        d["x"], d["y"] = xy[:, 0], xy[:, 1]
+        d["x"], d["y"] = frame._fwd.transform(d["lon"].to_numpy(), d["lat"].to_numpy())
         if cons_m is not None:
-            zone = cons_m.buffer(1000)
-            inside = np.array([zone.contains(Point(x, y)) for x, y in zip(d["x"], d["y"])])
+            zone = buffer_zone(cons_m, 1000)
+            inside = shapely.contains_xy(zone, d["x"].to_numpy(), d["y"].to_numpy())
             if inside.any():
                 d = d[inside]
         d = d.sort_values("time_utc")

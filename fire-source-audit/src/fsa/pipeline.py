@@ -144,22 +144,17 @@ class Pipeline:
     def match(self, fires: list[Fire]) -> gpd.GeoDataFrame:
         mcfg = self.settings.raw.get("matching", {})
         rows: list[dict[str, Any]] = []
-        for sid, spec in self.specs.items():
-            if spec.kind in ("viirs_h5", "firms_csv", "hms_text", "goes_fdc", "fireset"):
-                continue
-            src_dir = self.cache_dir / "raw" / sid
-            if not src_dir.exists():
-                continue
-            is_perim = "perimeter" in spec.roles
-            for f in fires:
-                p = cache.raw_path(self.cache_dir, sid, f.key)
-                if not p.exists():
-                    continue
-                raw = cache.load_gdf(p)
-                if len(raw) == 0:
-                    continue
-                norm = normalize_rows(raw, spec)
-                rows.extend(match_fire(f, norm, mcfg, is_perim))
+        jobs = [(spec, fires, self.cache_dir, mcfg) for sid, spec in self.specs.items()
+                if spec.kind not in ("viirs_h5", "firms_csv", "hms_text", "goes_fdc", "fireset")
+                and (self.cache_dir / "raw" / sid).exists()]
+        workers = int(self.settings.raw.get("analysis", {}).get("workers", 1))
+        if workers > 1 and len(jobs) > 1:
+            with ProcessPoolExecutor(max_workers=min(workers, len(jobs))) as ex:
+                for part in ex.map(_match_source, jobs):
+                    rows.extend(part)
+        else:
+            for job in jobs:
+                rows.extend(_match_source(job))
         fs = fireset_records(fires)
         df = pd.concat([pd.DataFrame(rows), fs], ignore_index=True) if rows else fs
         if "geometry" not in df:
@@ -193,21 +188,63 @@ class Pipeline:
         v = json.loads(p.read_text())
         return v or None
 
-    def analyze(self, fires: list[Fire], matched: gpd.GeoDataFrame) -> list[FireResult]:
-        an = FireAnalyzer(self.specs, self.settings)
-        out = []
+    def analyze_one(self, an: FireAnalyzer, f: Fire, recs: pd.DataFrame) -> FireResult:
+        try:
+            return an.analyze(f, recs, self._detections(f), self._goes(f))
+        except Exception as e:  # noqa: BLE001
+            log.exception("analysis failed for %s", f.key)
+            r = FireResult(summary={"fire_key": f.key, "fire_name": f.name, "year": f.year,
+                                    "analysis_error": repr(e)[:300]})
+            r.flags.append({"fire_key": f.key, "category": "analysis", "severity": "high",
+                            "message": f"analysis error: {e!r}"[:300]})
+            return r
+
+    def analyze(self, fires: list[Fire], matched: gpd.GeoDataFrame, workers: int | None = None) -> list[FireResult]:
         groups = {k: g for k, g in matched.groupby("fire_key")} if len(matched) else {}
-        for i, f in enumerate(fires, 1):
-            recs = groups.get(f.key, pd.DataFrame())
-            try:
-                out.append(an.analyze(f, recs, self._detections(f), self._goes(f)))
-            except Exception as e:  # noqa: BLE001
-                log.exception("analysis failed for %s", f.key)
-                r = FireResult(summary={"fire_key": f.key, "fire_name": f.name, "year": f.year,
-                                        "analysis_error": repr(e)[:300]})
-                r.flags.append({"fire_key": f.key, "category": "analysis", "severity": "high",
-                                "message": f"analysis error: {e!r}"[:300]})
+        jobs = [(f, groups.get(f.key, pd.DataFrame())) for f in fires]
+        workers = workers or int(self.settings.raw.get("analysis", {}).get("workers", 1))
+        out: list[FireResult] = []
+        if workers <= 1 or len(jobs) < 2:
+            an = FireAnalyzer(self.specs, self.settings)
+            for i, (f, recs) in enumerate(jobs, 1):
+                out.append(self.analyze_one(an, f, recs))
+                if i % 100 == 0:
+                    log.info("analyzed %d/%d", i, len(fires))
+            return out
+        # fires are independent and the geometry work is CPU-bound: one process per worker, order preserved
+        with ProcessPoolExecutor(max_workers=workers, initializer=_init_analysis_worker,
+                                 initargs=(self.settings, self.specs, self.defaults)) as ex:
+            for i, r in enumerate(ex.map(_analyze_job, jobs, chunksize=2), 1):
                 out.append(r)
-            if i % 100 == 0:
-                log.info("analyzed %d/%d", i, len(fires))
+                if i % 100 == 0:
+                    log.info("analyzed %d/%d", i, len(fires))
         return out
+
+
+def _match_source(job: tuple) -> list[dict[str, Any]]:
+    """Normalise and match one source's cached pulls for every fire (one process per source)."""
+    spec, fires, cache_dir, mcfg = job
+    is_perim = "perimeter" in spec.roles
+    rows: list[dict[str, Any]] = []
+    for f in fires:
+        p = cache.raw_path(cache_dir, spec.id, f.key)
+        if not p.exists():
+            continue
+        raw = cache.load_gdf(p)
+        if len(raw) == 0:
+            continue
+        rows.extend(match_fire(f, normalize_rows(raw, spec), mcfg, is_perim))
+    return rows
+
+
+_WORKER: dict[str, Any] = {}
+
+
+def _init_analysis_worker(settings: Settings, specs: dict[str, SourceSpec], defaults: dict[str, Any]) -> None:
+    _WORKER["pipe"] = Pipeline(settings, specs, defaults)
+    _WORKER["an"] = FireAnalyzer(specs, settings)
+
+
+def _analyze_job(job: tuple[Fire, pd.DataFrame]) -> FireResult:
+    f, recs = job
+    return _WORKER["pipe"].analyze_one(_WORKER["an"], f, recs)

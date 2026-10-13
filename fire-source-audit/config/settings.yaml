@@ -54,6 +54,9 @@ timing:
   tz_suspect_offsets_h: [2, 5, 7, 8]
   tz_suspect_tolerance_h: 0.25
 
+analysis:
+  workers: 16         # fires analysed in parallel processes (1 = in-process)
+
 goes:
   # satellite to scan by date (GOES-West preferred for California)
   schedule:

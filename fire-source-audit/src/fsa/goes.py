@@ -76,7 +76,8 @@ def earliest_detection(lon: float, lat: float, t_ref: pd.Timestamp, cfg: dict[st
             if ts is None or ts < t0 or ts > t1:
                 continue
             with fs.open(f, "rb") as fh:
-                ds = xr.open_dataset(fh, engine="h5netcdf")
+                # times come from the file name; some files carry units xarray cannot decode
+                ds = xr.open_dataset(fh, engine="h5netcdf", decode_times=False)
                 win = nearest_window(ds, lon, lat)
                 if win is None:
                     return None
