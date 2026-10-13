@@ -203,6 +203,21 @@ class FireAnalyzer:
             out["goes_time"] = pd.Timestamp(goes_hit["time_utc"])
             out["goes_lat"], out["goes_lon"] = goes_hit["lat"], goes_hit["lon"]
             res.summary["goes_first_utc"] = out["goes_time"]
+        if det is not None and len(det) and "source" in det:
+            # HMS mixes coarse GOES/AVHRR/MODIS points with analyst timing: report it apart from the VIIRS overpass
+            hms = det[det["source"] == "hms_points"].dropna(subset=["lat", "lon", "time_utc"])
+            det = det[det["source"] != "hms_points"]
+            if len(hms) and cons_m is not None:
+                zone = cons_m.buffer(2000)
+                hms = hms[[zone.contains(Point(*frame.xy(lo, la))) for lo, la in zip(hms["lon"], hms["lat"])]]
+            anchor = self._earliest_discovery(fire, recs)
+            if len(hms) and anchor is not None:
+                lead_h = float(self.ign.get("first_overpass_max_lead_h", 12))
+                hms = hms[hms["time_utc"] >= anchor - pd.Timedelta(hours=lead_h)]
+            if len(hms):
+                h = hms.sort_values("time_utc").iloc[0]
+                out["hms_time"] = h["time_utc"]
+                res.summary.update({"hms_first_utc": h["time_utc"], "hms_first_satellite": h.get("satellite")})
         if det is None or len(det) == 0:
             res.summary["viirs_n"] = 0
             return out
@@ -508,6 +523,8 @@ class FireAnalyzer:
             if lag < -3:
                 self._flag(res, fire, "timing", "medium",
                            f"first VIIRS detection near the fire is {-lag:.1f} h before the reported discovery")
+        if ref_t is not None and "hms_time" in sat:
+            res.summary["hms_minus_discovery_h"] = round((sat["hms_time"] - ref_t).total_seconds() / 3600, 2)
         if ref_t is not None and "goes_time" in sat:
             res.summary["goes_minus_discovery_h"] = round((sat["goes_time"] - ref_t).total_seconds() / 3600, 2)
 

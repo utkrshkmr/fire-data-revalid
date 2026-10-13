@@ -105,26 +105,34 @@ class Pipeline:
         df.to_csv(self.out_dir / "fetch_status.csv", index=False)
         return df
 
-    def fetch_goes(self, fires: list[Fire], force: bool = False) -> list[dict[str, Any]]:
+    def fetch_goes(self, fires: list[Fire], force: bool = False, workers: int = 8) -> list[dict[str, Any]]:
         from .goes import earliest_detection
         cfg = self.settings.raw.get("goes", {})
-        out = []
-        for f in fires:
+
+        def one(f: Fire) -> dict[str, Any] | None:
             p = self.cache_dir / "evidence" / "goes_fdc" / f"{f.key}.json"
             if p.exists() and not force:
-                out.append({"source": "goes_fdc", "fire_key": f.key, "status": "cached"})
-                continue
+                return {"source": "goes_fdc", "fire_key": f.key, "status": "cached"}
             lon, lat = (f.ign_lon, f.ign_lat) if f.ign_lat is not None else f.center
             t = f.start_utc or f.first_detection_utc
             if t is None:
-                continue
+                return None
             try:
                 hit = earliest_detection(lon, lat, t, cfg)
                 p.parent.mkdir(parents=True, exist_ok=True)
                 p.write_text(json.dumps(hit, default=str))
-                out.append({"source": "goes_fdc", "fire_key": f.key, "status": "ok", "rows": int(hit is not None)})
+                return {"source": "goes_fdc", "fire_key": f.key, "status": "ok", "rows": int(hit is not None)}
             except Exception as e:  # noqa: BLE001
-                out.append({"source": "goes_fdc", "fire_key": f.key, "status": "error", "detail": repr(e)[:300]})
+                return {"source": "goes_fdc", "fire_key": f.key, "status": "error", "detail": repr(e)[:300]}
+
+        # each fire reads ~100 five-minute files from S3; fires are independent, so scan several at once
+        out = []
+        with ThreadPoolExecutor(max_workers=max(1, int(cfg.get("workers", workers)))) as ex:
+            for i, r in enumerate(ex.map(one, fires), 1):
+                if r:
+                    out.append(r)
+                if i % 50 == 0:
+                    log.info("goes_fdc: %d/%d fires", i, len(fires))
         return out
 
     # ------------------------------------------------------------ match

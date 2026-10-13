@@ -314,11 +314,18 @@ class HmsText(EvidenceSource):
         parts = []
         for day in pd.date_range((ref - pd.Timedelta(days=2)).normalize(), (ref + pd.Timedelta(days=1)).normalize()):
             url = self.spec.url.format(yyyy=day.strftime("%Y"), mm=day.strftime("%m"), yyyymmdd=day.strftime("%Y%m%d"))
-            try:
-                txt = self.http.get(url).text
-            except Exception as e:  # noqa: BLE001 - a missing day is not fatal
-                log.info("HMS %s unavailable: %s", day.date(), e)
-                continue
+            # one national file per day, shared by every fire burning that day: cache it
+            day_file = self.settings.cache_dir / "bulk" / "hms" / url.rsplit("/", 1)[-1]
+            if day_file.exists():
+                txt = day_file.read_text()
+            else:
+                try:
+                    txt = self.http.get(url).text
+                except Exception as e:  # noqa: BLE001 - a missing day is not fatal
+                    log.info("HMS %s unavailable: %s", day.date(), e)
+                    continue
+                day_file.parent.mkdir(parents=True, exist_ok=True)
+                day_file.write_text(txt)
             parts.append(parse_hms_text(txt))
         if not parts:
             return pd.DataFrame(columns=DETECTION_COLUMNS)
@@ -338,7 +345,7 @@ def parse_hms_text(txt: str) -> pd.DataFrame:
         "lon": pd.to_numeric(df["lon"], errors="coerce"),
         "satellite": df.get("satellite", pd.Series([None] * len(df))).astype(str),
         "sensor": df.get("method", pd.Series([None] * len(df))).astype(str),
-        "frp": pd.to_numeric(df.get("frp", pd.Series([np.nan] * len(df))), errors="coerce"),
+        "frp": pd.to_numeric(df.get("frp", pd.Series([np.nan] * len(df))), errors="coerce").where(lambda v: v > -999),
         "confidence": None, "source": "hms_points",
     }).dropna(subset=["time_utc", "lat", "lon"])
 

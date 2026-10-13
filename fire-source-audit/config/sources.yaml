@@ -415,8 +415,8 @@ sources:
     roles: [evidence]
     lineage: SAT-HMS
     trust: B
-    enabled: false
-    verified: "directory 2026-10-13; file pattern unverified"
+    enabled: true
+    verified: "file pattern checked 2026-10-13 (Text/2018/11/hms_fire20181108.txt)"
 
   # ---------------------------------------------------------------- the dataset under audit
   fireset_subset:

@@ -61,6 +61,7 @@ goes:
     - {from: "2019-02-12", to: "2023-01-03", bucket: noaa-goes17}
     - {from: "2023-01-04", to: "2099-01-01", bucket: noaa-goes18}
   product: ABI-L2-FDCC
+  workers: 8          # fires scanned in parallel (about 25 s each)
   hours_before: 6
   hours_after: 3
   radius_m: 5000
