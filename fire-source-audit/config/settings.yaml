@@ -1,0 +1,65 @@
+# Run settings for fire-source-audit. Paths are relative to the project root unless absolute.
+
+paths:
+  fires_xlsx: data/SUBSET_expanded_20260830.xlsx
+  fires_sheet: Initial 30
+  cache_dir: cache
+  out_dir: out
+  # local downloads (leave a path empty or missing to skip that source)
+  local:
+    fpa_fod: data/FPA_FOD_20260615.gpkg            # or .sqlite / .gdb, layer "Fires"
+    mtbs_perimeters: data/mtbs_perims_DD.shp        # from the MTBS national burned-area-boundaries download
+    mtbs_points: data/mtbs_FODpoints_DD.shp         # from the MTBS national fire-occurrence-points download
+    usgs_combined: data/usgs_combined_fire_polygons.gdb
+    viirs_h5_pattern: data/run_{year}/detection_{year}_filtered_350.h5
+    firms_csv_glob: data/firms/*.csv
+
+http:
+  timeout_s: 60
+  retries: 4
+  backoff_s: 2.0
+  pause_between_requests_s: 0.3
+  user_agent: "fire-source-audit/0.1 (research; contact via project README)"
+
+matching:
+  # a candidate record is accepted for a fire when its score >= accept_score
+  accept_score: 0.60
+  # if the runner-up is within this margin of the best, the match is flagged ambiguous
+  ambiguity_margin: 0.05
+  # reported discovery may differ from the FireSET start by this many days and still count
+  date_window_days: 5
+  # name similarity (0-1) below which name evidence counts as disagreement
+  name_min_similarity: 0.55
+  # a point within this distance of the FireSET buffered box counts as spatially consistent (m)
+  spatial_slack_m: 5000
+
+ignition:
+  agree_m: 500          # all lineages within this distance of consensus -> "agree"
+  minor_m: 2000         # within this -> "minor disagreement"; beyond -> "major"
+  perimeter_tolerance_m: 375   # a point this close to the consensus perimeter counts as on the perimeter
+  viirs_near_m: 1500    # a point this close to the first-overpass detections counts as consistent
+  first_overpass_window_min: 60  # detections within this many minutes of the earliest form the first overpass
+  patch_threshold_m: 500  # propose a FireSET correction when the recommended point moves more than this
+
+perimeter:
+  raster_res_m: 30
+  consensus_vote: 0.5   # a cell is in the consensus perimeter when >= this share of lineages include it
+  max_cells: 40000000   # skip rasterising perimeters larger than this many cells (falls back to pairwise only)
+
+timing:
+  pacific_tz: America/Los_Angeles
+  # time offsets (hours) whose size suggests a time-zone bug rather than a real disagreement
+  tz_suspect_offsets_h: [7, 8]
+  tz_suspect_tolerance_h: 0.25
+
+goes:
+  # satellite to scan by date (GOES-West preferred for California)
+  schedule:
+    - {from: "2018-01-01", to: "2019-02-11", bucket: noaa-goes16}
+    - {from: "2019-02-12", to: "2023-01-03", bucket: noaa-goes17}
+    - {from: "2023-01-04", to: "2099-01-01", bucket: noaa-goes18}
+  product: ABI-L2-FDCC
+  hours_before: 6
+  hours_after: 3
+  radius_m: 5000
+  fire_mask_codes: [10, 11, 12, 13, 14, 15, 30, 31, 32, 33, 34, 35]

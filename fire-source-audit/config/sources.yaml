@@ -1,0 +1,402 @@
+# Source registry for fire-source-audit.
+#
+# Every source here is published by a U.S. federal or California state agency.
+# `lineage` groups sources that copy from the same upstream record so the consensus
+# does not count one upstream twice (e.g. WFIGS locations and InFORM both come from IRWIN).
+#
+# fields: canonical name -> list of candidate column names (first one present wins,
+#         case-insensitive). Canonical names used by the analysis:
+#   name, irwin_id, unique_fire_id, local_number, unit, year, complex_name,
+#   lat, lon, discovery, containment, control, out, size_acres, cause,
+#   perimeter_datetime, map_method, perimeter_source
+#
+# roles: which comparisons the source takes part in
+#   ignition   - provides a reported point of origin / incident location
+#   perimeter  - provides a final (or latest) fire perimeter polygon
+#   timing     - provides discovery / containment / out times
+#   size       - provides a reported final size
+#   cause      - provides a cause
+#   evidence   - independent physical evidence (satellite), not a reported value
+#
+# verified: date the endpoint and field names were checked against live service metadata.
+#           "unverified" entries must be checked with `fsa probe` before trusting results.
+
+defaults:
+  arcgis_page_size: 1000
+  # buffer around the FireSET bounding box when querying spatial services (degrees)
+  query_buffer_deg: 0.05
+
+sources:
+
+  # ---------------------------------------------------------------- incident records
+  wfigs_locations:
+    name: NIFC WFIGS Incident Locations (IRWIN)
+    agency: National Interagency Fire Center / NWCG IRWIN
+    kind: arcgis
+    url: https://services3.arcgis.com/T4QMspbfLg3qTGWY/arcgis/rest/services/WFIGS_Incident_Locations/FeatureServer/0
+    geometry: point
+    where: "IncidentTypeCategory = 'WF' AND FireDiscoveryDateTime >= TIMESTAMP '{t0}' AND FireDiscoveryDateTime < TIMESTAMP '{t1}'"
+    roles: [ignition, timing, size, cause]
+    lineage: IRWIN
+    trust: A
+    ignition_kind: initial lat/long (IRWIN point of origin)
+    datetime_tz: UTC
+    fields:
+      name: [IncidentName]
+      irwin_id: [IrwinID]
+      unique_fire_id: [UniqueFireIdentifier]
+      local_number: [LocalIncidentIdentifier]
+      unit: [POOProtectingUnit]
+      complex_name: [CpxName]
+      lat: [InitialLatitude]
+      lon: [InitialLongitude]
+      discovery: [FireDiscoveryDateTime]
+      containment: [ContainmentDateTime]
+      control: [ControlDateTime]
+      out: [FireOutDateTime]
+      size_acres: [FinalAcres, IncidentSize]
+      cause: [FireCauseGeneral, FireCause]
+    verified: 2026-10-13
+
+  inform_fodr:
+    name: NIFC InFORM Fire Occurrence Data Records (public)
+    agency: National Interagency Fire Center
+    kind: arcgis
+    url: https://services3.arcgis.com/T4QMspbfLg3qTGWY/arcgis/rest/services/InFORM_FireOccurrence_Public/FeatureServer/0
+    geometry: point
+    where: "FireDiscoveryDateTime >= TIMESTAMP '{t0}' AND FireDiscoveryDateTime < TIMESTAMP '{t1}'"
+    roles: [ignition, timing, size, cause]
+    lineage: IRWIN
+    trust: A
+    ignition_kind: final fire report point of origin
+    datetime_tz: UTC
+    coverage: "complete 2020 to present; earlier years being back-filled"
+    fields:
+      name: [IncidentName]
+      irwin_id: [IrwinID]
+      unique_fire_id: [UniqueFireIdentifier]
+      local_number: [LocalIncidentIdentifier]
+      unit: [POOProtectingUnit]
+      lat: [InitialLatitude, POOLatitude]
+      lon: [InitialLongitude, POOLongitude]
+      discovery: [FireDiscoveryDateTime]
+      containment: [ContainmentDateTime]
+      control: [ControlDateTime]
+      out: [FireOutDateTime]
+      size_acres: [FinalAcres, CalculatedAcres]
+      cause: [FireCauseGeneral, FireCause]
+    verified: 2026-10-13
+
+  calfire_incidents:
+    name: CAL FIRE incident list (fire.ca.gov)
+    agency: CAL FIRE
+    kind: calfire_json
+    url: https://www.fire.ca.gov/umbraco/api/IncidentApi/List?inactive=true
+    geometry: point
+    roles: [ignition, timing, size]
+    lineage: CALFIRE-OPS
+    trust: A
+    ignition_kind: incident map location
+    datetime_tz: America/Los_Angeles
+    coverage: "CAL FIRE and SRA incidents, 2013 to present"
+    fields:
+      name: [Name]
+      lat: [Latitude]
+      lon: [Longitude]
+      discovery: [Started, StartedDateOnly]
+      out: [ExtinguishedDate, Extinguished]
+      size_acres: [AcresBurned]
+      unit: [AdminUnit]
+      source_id: [UniqueId]
+    verified: 2026-10-13
+    notes: "robots.txt disallows crawling the site; one cached call of the API per run is the intended use."
+
+  usfs_edw_points:
+    name: USFS EDW Fire Occurrence Point (FireStat, all years)
+    agency: USDA Forest Service
+    kind: arcgis
+    url: https://apps.fs.usda.gov/arcx/rest/services/EDW/EDW_FireOccurrenceAndPerimeter_01/MapServer/9
+    geometry: point
+    where: "fireyear = {year}"
+    roles: [ignition, timing, size, cause]
+    lineage: USFS-FIRESTAT
+    trust: A
+    ignition_kind: FireStat point of origin (NFS protection only)
+    datetime_tz: UTC
+    fields:
+      name: [firename]
+      unique_fire_id: [uniqfireid]
+      local_number: [localfirenum]
+      unit: [unitidprotect]
+      complex_name: [complexname]
+      year: [fireyear]
+      lat: [latdd83]
+      lon: [longdd83]
+      discovery: [discoverydatetime]
+      out: [fireoutdatetime]
+      size_acres: [totalacres]
+      cause: [statcause]
+      source_id: [fireoccurid]
+    verified: 2026-10-13
+
+  fpa_fod:
+    name: FPA Fire Occurrence Database, 7th ed. (1992-2024)
+    agency: USDA Forest Service Research Data Archive (Short 2026, doi:10.2737/RDS-2013-0009.7)
+    kind: local_vector
+    path_key: fpa_fod
+    layer: Fires
+    geometry: point
+    roles: [ignition, timing, size, cause]
+    lineage: FPA-FOD
+    trust: A
+    ignition_kind: compiled agency report location (>= PLSS-section precision)
+    datetime_tz: America/Los_Angeles
+    filter: {STATE: CA}
+    fields:
+      name: [FIRE_NAME]
+      irwin_id: [IRWIN_ID, IRWINID]
+      unique_fire_id: [UNIQUE_FIRE_ID]
+      local_number: [LOCAL_INCIDENT_ID]
+      unit: [NWCG_REPORTING_UNIT_ID]
+      complex_name: [COMPLEX_NAME]
+      year: [FIRE_YEAR]
+      lat: [LATITUDE]
+      lon: [LONGITUDE]
+      discovery: [DISCOVERY_DATE]
+      discovery_time: [DISCOVERY_TIME]
+      containment: [CONT_DATE]
+      containment_time: [CONT_TIME]
+      size_acres: [FIRE_SIZE]
+      cause: [NWCG_CAUSE_CLASSIFICATION, NWCG_GENERAL_CAUSE]
+      source_id: [FOD_ID]
+      mtbs_id: [MTBS_ID]
+    verified: "page 2026-10-13; column names from 6th edition, confirm with `fsa probe`"
+
+  mtbs_points:
+    name: MTBS fire occurrence locations
+    agency: USGS EROS / USDA Forest Service GTAC
+    kind: local_vector
+    path_key: mtbs_points
+    geometry: point
+    roles: [ignition, timing, size]
+    lineage: MTBS-REPORTED
+    trust: B
+    ignition_kind: reported location carried into MTBS
+    datetime_tz: UTC
+    fields:
+      name: [Incid_Name]
+      irwin_id: [irwinID, IRWINID]
+      lat: [BurnBndLat]
+      lon: [BurnBndLon]
+      discovery: [Ig_Date]
+      size_acres: [BurnBndAc]
+      source_id: [Event_ID]
+    verified: unverified
+
+  # ---------------------------------------------------------------- perimeters
+  frap_perimeters:
+    name: CAL FIRE FRAP California Fire Perimeters (all)
+    agency: CAL FIRE Fire and Resource Assessment Program
+    kind: arcgis
+    url: https://services1.arcgis.com/jUJYIo9tSA7EHvfZ/arcgis/rest/services/California_Historic_Fire_Perimeters/FeatureServer/0
+    geometry: polygon
+    where: "YEAR_ = {year}"
+    roles: [perimeter, timing, size, cause]
+    lineage: CALFIRE-FRAP
+    trust: A
+    datetime_tz: UTC
+    date_only: true
+    fields:
+      name: [FIRE_NAME]
+      irwin_id: [IRWINID]
+      local_number: [INC_NUM]
+      unit: [UNIT_ID]
+      complex_name: [COMPLEX_NAME]
+      year: [YEAR_]
+      discovery: [ALARM_DATE]
+      containment: [CONT_DATE]
+      size_acres: [GIS_ACRES]
+      cause: [CAUSE]
+      map_method: [C_METHOD]
+    cause_codes: frap
+    verified: 2026-10-13
+
+  ifph_perimeters:
+    name: NIFC InterAgency Fire Perimeter History (all years)
+    agency: National Interagency Fire Center
+    kind: arcgis
+    url: https://services3.arcgis.com/T4QMspbfLg3qTGWY/arcgis/rest/services/InterAgencyFirePerimeterHistory_All_Years_View/FeatureServer/0
+    geometry: polygon
+    where: "FIRE_YEAR_INT = {year}"
+    roles: [perimeter, size]
+    lineage: NIFC-IFPH
+    lineage_from_field:
+      field: SOURCE
+      map: {CALFIRE: CALFIRE-FRAP, "CAL FIRE": CALFIRE-FRAP, FIRESTAT: USFS-FIRESTAT, EDW: USFS-FIRESTAT, WFIGS: NIFC-WFIGS}
+    trust: A
+    coverage: "through the 2021 season"
+    fields:
+      name: [INCIDENT]
+      irwin_id: [IRWINID]
+      unique_fire_id: [UNQE_FIRE_ID]
+      local_number: [LOCAL_NUM]
+      unit: [UNIT_ID]
+      year: [FIRE_YEAR_INT, FIRE_YEAR]
+      size_acres: [GIS_ACRES]
+      map_method: [MAP_METHOD]
+      perimeter_source: [SOURCE]
+    verified: 2026-10-13
+
+  wfigs_perimeters:
+    name: NIFC WFIGS Interagency Perimeters
+    agency: National Interagency Fire Center
+    kind: arcgis
+    url: https://services3.arcgis.com/T4QMspbfLg3qTGWY/arcgis/rest/services/WFIGS_Interagency_Perimeters/FeatureServer/0
+    geometry: polygon
+    where: "attr_FireDiscoveryDateTime >= TIMESTAMP '{t0}' AND attr_FireDiscoveryDateTime < TIMESTAMP '{t1}'"
+    roles: [perimeter, size]
+    lineage: NIFC-WFIGS
+    trust: A
+    datetime_tz: UTC
+    fields:
+      name: [poly_IncidentName, attr_IncidentName]
+      irwin_id: [attr_IrwinID, poly_IRWINID]
+      unique_fire_id: [attr_UniqueFireIdentifier]
+      discovery: [attr_FireDiscoveryDateTime]
+      size_acres: [poly_GISAcres, poly_Acres_AutoCalc]
+      perimeter_datetime: [poly_PolygonDateTime]
+      map_method: [poly_MapMethod]
+    verified: 2026-10-13
+
+  usfs_edw_perimeters:
+    name: USFS EDW Final Fire Perimeter (all years)
+    agency: USDA Forest Service
+    kind: arcgis
+    url: https://apps.fs.usda.gov/arcx/rest/services/EDW/EDW_FireOccurrenceAndPerimeter_01/MapServer/10
+    geometry: polygon
+    where: "fireyear = {year}"
+    roles: [perimeter, size]
+    lineage: USFS-FIRESTAT
+    trust: A
+    datetime_tz: UTC
+    fields:
+      name: [firename]
+      unique_fire_id: [uniqfireid]
+      local_number: [localfirenum]
+      complex_name: [complexname]
+      year: [fireyear]
+      discovery: [discoverydatetime]
+      size_acres: [gisacres, totalacres]
+      perimeter_datetime: [perimeterdatetime]
+      source_id: [fireoccurid]
+    verified: 2026-10-13
+
+  mtbs_perimeters:
+    name: MTBS burned area boundaries (Landsat dNBR)
+    agency: USGS EROS / USDA Forest Service GTAC
+    kind: local_vector
+    path_key: mtbs_perimeters
+    geometry: polygon
+    roles: [perimeter, size]
+    lineage: MTBS
+    trust: A
+    datetime_tz: UTC
+    coverage: "fires >= 1,000 ac in the West, 1984 to the latest MTBS release"
+    fields:
+      name: [Incid_Name]
+      irwin_id: [irwinID, IRWINID]
+      discovery: [Ig_Date]
+      size_acres: [BurnBndAc]
+      source_id: [Event_ID]
+    verified: unverified
+
+  firis_perimeters:
+    name: CA perimeters CAL FIRE / NIFC / FIRIS public view
+    agency: CAL FIRE with Cal OES FIRIS
+    kind: arcgis
+    url: https://services1.arcgis.com/jUJYIo9tSA7EHvfZ/arcgis/rest/services/CA_Perimeters_NIFC_FIRIS_public_view/FeatureServer/0
+    geometry: polygon
+    roles: [perimeter, size]
+    lineage: FIRIS-OPS
+    trust: B
+    enabled: true
+    datetime_tz: UTC
+    notes: "operational perimeters; one incident may have many dated polygons, the latest is used"
+    fields:
+      name: [incident_name]
+      local_number: [incident_number]
+      discovery: [FireDiscoveryDate]
+      size_acres: [area_acres]
+      perimeter_datetime: [poly_DateCurrent, EditDate]
+      perimeter_source: [source]
+    verified: 2026-10-13
+
+  usgs_combined:
+    name: USGS Combined wildland fire polygons (Welty & Jeffries 2022)
+    agency: U.S. Geological Survey (doi:10.5066/P9ZXGFY3)
+    kind: local_vector
+    path_key: usgs_combined
+    geometry: polygon
+    roles: [perimeter]
+    lineage: USGS-COMBINED
+    trust: C
+    consensus: false
+    notes: "derivative merge of 40 agency datasets; reported for comparison, excluded from consensus"
+    fields:
+      name: [Listed_Fire_Names, Fire_Name]
+      year: [Fire_Year]
+    verified: unverified
+
+  # ---------------------------------------------------------------- satellite evidence
+  viirs_fireset:
+    name: NASA FIRMS VIIRS 375 m (FireSET filtered detections)
+    agency: NASA LANCE / FIRMS
+    kind: viirs_h5
+    path_key: viirs_h5_pattern
+    roles: [evidence]
+    lineage: SAT-LEO
+    trust: A
+    verified: "format from FireSET load_saved_viirs_detections"
+
+  viirs_firms_csv:
+    name: NASA FIRMS VIIRS / MODIS archive CSV
+    agency: NASA LANCE / FIRMS
+    kind: firms_csv
+    path_key: firms_csv_glob
+    roles: [evidence]
+    lineage: SAT-LEO
+    trust: A
+    enabled: false
+    verified: "standard FIRMS archive columns"
+
+  goes_fdc:
+    name: NOAA GOES-R ABI Fire Detection and Characterization (CONUS, 5 min)
+    agency: NOAA NESDIS / NCEI (AWS NODD buckets noaa-goes16/17/18)
+    kind: goes_fdc
+    roles: [evidence]
+    lineage: SAT-GEO
+    trust: A
+    enabled: false
+    notes: "heavy; scans 5-min files around the reported discovery time"
+    verified: "catalog 2026-10-13"
+
+  hms_points:
+    name: NOAA NESDIS Hazard Mapping System fire points (analyst QC)
+    agency: NOAA NESDIS OSPO
+    kind: hms_text
+    url: https://satepsanone.nesdis.noaa.gov/pub/FIRE/web/HMS/Fire_Points/Text/{yyyy}/{mm}/hms_fire{yyyymmdd}.txt
+    roles: [evidence]
+    lineage: SAT-HMS
+    trust: B
+    enabled: false
+    verified: "directory 2026-10-13; file pattern unverified"
+
+  # ---------------------------------------------------------------- the dataset under audit
+  fireset_subset:
+    name: FireSET SUBSET table (values under audit)
+    agency: FireSET (from WFIGS / FRAP)
+    kind: fireset
+    roles: [ignition, timing, size]
+    lineage: FIRESET
+    trust: X
+    consensus: false

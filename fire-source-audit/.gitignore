@@ -1,0 +1,7 @@
+cache/
+out/
+data/*
+!data/README.md
+__pycache__/
+*.egg-info/
+.venv/

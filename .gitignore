@@ -1,0 +1,15 @@
+# large agency downloads (FPA-FOD, MTBS, USGS) - re-fetch with scripts/download_local_sources.sh
+downloads/
+# user-supplied inputs, not for a public repo
+docs_input/
+fire-source-audit/data/*
+!fire-source-audit/data/README.md
+# run products
+fire-source-audit/cache/
+fire-source-audit/out/
+fire-source-audit/out_*/
+# python
+.venv/
+__pycache__/
+*.egg-info/
+.pytest_cache/
