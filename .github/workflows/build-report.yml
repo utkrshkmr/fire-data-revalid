@@ -1,0 +1,51 @@
+name: Build findings report (PDF)
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "report/**"
+      - ".github/workflows/build-report.yml"
+  pull_request:
+    paths:
+      - "report/**"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  pdf:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Compile findings.tex
+        uses: xu-cheng/latex-action@v3
+        with:
+          root_file: findings.tex
+          working_directory: report
+          latexmk_use_lualatex: false
+          # -halt-on-error so a TikZ/pgfplots mistake fails the job instead of leaving a half-built PDF
+          args: -pdf -interaction=nonstopmode -halt-on-error -file-line-error
+
+      - name: Upload PDF artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: fire-data-revalidate-findings
+          path: report/findings.pdf
+          if-no-files-found: error
+
+      # Keep a stable download link: the PDF is attached to a rolling "report-latest" pre-release.
+      - name: Publish rolling release
+        if: github.event_name != 'pull_request'
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: report-latest
+          name: Findings report (latest build)
+          prerelease: true
+          body: |
+            PDF of `report/findings.tex` built from commit ${{ github.sha }}.
+          files: report/findings.pdf
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

@@ -7,6 +7,9 @@ time, size and cause.
 - `fire-source-audit/` — the `fsa` tool (probe → fetch → analyze). See its [README](fire-source-audit/README.md),
   [source catalog](fire-source-audit/docs/SOURCES.md) and [methods](fire-source-audit/docs/METHODS.md).
 - [`FINDINGS.md`](FINDINGS.md) — what the 2026-10-13 run found about the sources and about FireSET.
+- `report/findings.tex` — the same findings as a detailed LaTeX report with flow and lineage diagrams.
+  GitHub Actions builds it on every push ([workflow](.github/workflows/build-report.yml)); the PDF is attached to the
+  rolling `report-latest` pre-release and to each run as an artifact. Locally: `cd report && latexmk -pdf findings.tex`.
 - `scripts/download_local_sources.sh` — fetches the file-based sources (FPA-FOD 7th ed., MTBS, USGS combined
   polygons, FIRMS VIIRS archives) into `downloads/`.
 

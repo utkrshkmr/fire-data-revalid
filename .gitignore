@@ -15,3 +15,12 @@ __pycache__/
 .pytest_cache/
 # logs
 *.log
+# LaTeX build products (the PDF is built by .github/workflows/build-report.yml)
+report/*.aux
+report/*.log
+report/*.out
+report/*.toc
+report/*.fls
+report/*.fdb_latexmk
+report/*.synctex.gz
+report/findings.pdf
